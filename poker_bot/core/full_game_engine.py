@@ -62,7 +62,7 @@ def is_betting_done(status, bets, acted, _):
     num_active = active.sum()
     max_bet = jnp.max(bets * active)
     all_called = (acted[0] >= num_active) & (bets == max_bet).all()
-    return ((num_active <= 1) | all_called).item()
+    return (num_active <= 1) | all_called
 
 @jax.jit
 def get_legal_actions(state: GameState):
@@ -128,7 +128,7 @@ def _betting_body(state):
 
 @jax.jit
 def run_betting_round(init_state):
-    cond = lambda s: not bool(is_betting_done(s.player_status, s.bets, s.acted_this_round, s.street))
+    cond = lambda s: ~is_betting_done(s.player_status, s.bets, s.acted_this_round, s.street)
     return lax.while_loop(cond, _betting_body, init_state)
 
 # ---------- Street ----------
