@@ -240,4 +240,4 @@ def batch_play_game(batch_size: int, policy_logits: Array, key: Array):
     final_states = vmap_play_game(initial_states, policy_logits, keys)
     payoffs = vmap_resolve_showdown(final_states)
     
-    return final_states, payoffs, final_states.history
+    return stacked_states, payoffs, stacked_histories, initial_states
