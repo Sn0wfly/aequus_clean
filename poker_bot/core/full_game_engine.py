@@ -128,19 +128,28 @@ def run_betting_round(init_state):
     return lax.while_loop(cond, _betting_body, init_state)
 
 # ---------- Street ----------
-def play_street(state, num_cards):
-    def deal(s):
+def play_street(state: GameState, num_cards: int) -> GameState:
+    def deal(s: GameState) -> GameState:
         start = s.deck_ptr[0]
-        # Extrae exactamente `num_cards` cartas a partir de `start`
         cards = lax.dynamic_slice(s.deck, (start,), (num_cards,))
-        # Inserta las cartas extraídas en `comm_cards` a partir de `start`
         comm = lax.dynamic_update_slice(s.comm_cards, cards, (start,))
-        return s.replace(
+        return GameState(
+            stacks=s.stacks,
+            bets=s.bets,
+            player_status=s.player_status,
+            hole_cards=s.hole_cards,
             comm_cards=comm,
+            cur_player=jnp.array([0], dtype=jnp.int8),
+            street=s.street,
+            pot=s.pot,
+            deck=s.deck,
             deck_ptr=s.deck_ptr + num_cards,
             acted_this_round=jnp.array([0], dtype=jnp.int8),
-            cur_player=jnp.array([0], dtype=jnp.int8)
+            key=s.key,
+            action_hist=s.action_hist,
+            hist_ptr=s.hist_ptr
         )
+
     state = lax.cond(num_cards > 0, deal, lambda x: x, state)
     return run_betting_round(state)
 
