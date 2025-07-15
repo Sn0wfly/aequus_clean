@@ -3,7 +3,15 @@ import jax.numpy as jnp
 from jax import Array
 from dataclasses import dataclass
 from typing import Optional
+import numpy as np
+from jax import ShapeDtypeStruct
 from poker_bot.evaluator import HandEvaluator
+
+evaluator = HandEvaluator()
+
+def evaluate_hand_wrapper(cards_np: np.ndarray) -> int:
+    cards_list = cards_np.tolist()
+    return evaluator.evaluate_single(cards_list)
 
 @dataclass
 class GameState:
@@ -302,7 +310,6 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
     num_active = jnp.sum(active_mask)
     pot = state.pot_size[0]
     bets = state.bets
-    evaluator = HandEvaluator()
 
     def single_winner_case(_):
         winner = jnp.argmax(active_mask)
@@ -311,15 +318,17 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
         return payoffs
 
     def showdown_case(_):
-        # Solo jugadores activos
         def player_hand_eval(i):
-            # Junta las cartas de mano y comunitarias, ignora comunitarias no repartidas (-1)
             hole = state.hole_cards[i]
             comm = state.community_cards[state.community_cards != -1]
             cards = jnp.concatenate([hole, comm], axis=0)
-            # Convierte a lista de ints para el evaluador
-            cards_list = list(map(int, cards.tolist()))
-            return evaluator.evaluate_single(cards_list)
+            # Llama al evaluador externo usando pure_callback
+            strength = jax.pure_callback(
+                evaluate_hand_wrapper,
+                ShapeDtypeStruct((), jnp.int32),
+                cards.astype(jnp.int32)
+            )
+            return strength
         idxs = jnp.arange(6)
         hand_strengths = jax.vmap(lambda i: jax.lax.cond(active_mask[i], player_hand_eval, lambda _: -1, i))(idxs)
         max_strength = jnp.max(hand_strengths)
