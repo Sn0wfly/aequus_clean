@@ -411,7 +411,8 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
             strength = jax.pure_callback(
                 evaluate_hand_wrapper,
                 ShapeDtypeStruct((), jnp.int32),
-                all_cards.astype(jnp.int32)
+                all_cards.astype(jnp.int32),
+                vmap_method='sequential'
             )
             return strength
         idxs = jnp.arange(6)
