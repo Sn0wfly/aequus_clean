@@ -46,7 +46,7 @@ class GameState:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-# @jax.jit
+@jax.jit
 def get_legal_actions(state: GameState, num_actions: int = 14) -> jnp.ndarray:
     """
     Devuelve un array booleano de tamaño num_actions donde True indica que la acción es legal.
@@ -87,7 +87,7 @@ def get_legal_actions(state: GameState, num_actions: int = 14) -> jnp.ndarray:
 
     return legal_actions_mask
 
-# @jax.jit
+@jax.jit
 def _update_turn(state: GameState) -> GameState:
     """
     Avanza el turno al siguiente jugador activo (player_status == 0).
@@ -122,7 +122,7 @@ def _update_turn(state: GameState) -> GameState:
         num_players_acted_this_round=state.num_players_acted_this_round
     )
 
-# @jax.jit
+@jax.jit
 def step(state: GameState, action: int) -> GameState:
     """
     Aplica la acción al estado y devuelve un nuevo GameState actualizado.
@@ -218,7 +218,7 @@ def step(state: GameState, action: int) -> GameState:
     # action: 0=FOLD, 1=CHECK, 2=CALL, 3-13=BET/RAISE
     return action_fn(jnp.clip(action, 0, 13))
 
-# @jax.jit
+@jax.jit
 def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: Array = None) -> GameState:
     print("--- Iniciando run_betting_round ---")
     if key is None:
@@ -283,7 +283,7 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
     )
     return final_state
 
-# @jax.jit
+@jax.jit
 def create_initial_state(key: Array) -> GameState:
     # Baraja la baraja
     deck = jnp.arange(52)
@@ -315,33 +315,7 @@ def create_initial_state(key: Array) -> GameState:
         num_players_acted_this_round=num_players_acted_this_round
     )
 
-# @partial(jax.jit, static_argnums=1)
-def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState:
-    start = state.deck_pointer[0]
-    cards = jax.lax.dynamic_slice(
-        state.deck,
-        (start,),
-        (num_cards_to_deal,)
-    )
-    mask = (state.community_cards == -1)
-    idxs = jnp.where(mask, size=num_cards_to_deal, fill_value=0)[0]
-    new_community = state.community_cards.at[idxs[:num_cards_to_deal]].set(cards)
-    new_deck_pointer = state.deck_pointer + num_cards_to_deal
-    return GameState(
-        stacks=state.stacks,
-        bets=state.bets,
-        player_status=state.player_status,
-        hole_cards=state.hole_cards,
-        community_cards=new_community,
-        current_player_idx=state.current_player_idx,
-        street=state.street,
-        pot_size=state.pot_size,
-        deck=state.deck,
-        deck_pointer=new_deck_pointer,
-        num_players_acted_this_round=state.num_players_acted_this_round
-    )
-
-# @jax.jit
+@jax.jit
 def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) -> GameState:
     """
     Simula una mano completa de póker (hasta 4 rondas de apuestas).
@@ -382,7 +356,7 @@ def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) 
     )
     return final_state
 
-# @jax.jit
+@jax.jit
 def resolve_showdown(state: GameState) -> jnp.ndarray:
     """
     Calcula los payoffs finales para cada jugador al terminar la mano.
@@ -437,6 +411,32 @@ batch_play_game_vmapped = jax.vmap(play_game, in_axes=(0, None, 0))
 def _resolve_showdown_vmapped(state_batch):
     return jax.vmap(resolve_showdown)(state_batch)
 batch_resolve_showdown = _resolve_showdown_vmapped
+
+@jax.jit
+def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState:
+    start = state.deck_pointer[0]
+    cards = jax.lax.dynamic_slice(
+        state.deck,
+        (start,),
+        (num_cards_to_deal,)
+    )
+    mask = (state.community_cards == -1)
+    idxs = jnp.where(mask, size=num_cards_to_deal, fill_value=0)[0]
+    new_community = state.community_cards.at[idxs[:num_cards_to_deal]].set(cards)
+    new_deck_pointer = state.deck_pointer + num_cards_to_deal
+    return GameState(
+        stacks=state.stacks,
+        bets=state.bets,
+        player_status=state.player_status,
+        hole_cards=state.hole_cards,
+        community_cards=new_community,
+        current_player_idx=state.current_player_idx,
+        street=state.street,
+        pot_size=state.pot_size,
+        deck=state.deck,
+        deck_pointer=new_deck_pointer,
+        num_players_acted_this_round=state.num_players_acted_this_round
+    )
 
 def batch_play_game(batch_size: int, policy_logits: jnp.ndarray, key: Array):
     keys = jax.random.split(key, batch_size)
