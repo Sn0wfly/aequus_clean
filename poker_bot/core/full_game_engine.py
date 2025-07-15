@@ -315,19 +315,16 @@ def create_initial_state(key: Array) -> GameState:
         num_players_acted_this_round=num_players_acted_this_round
     )
 
+MAX_GAME_LENGTH = 60  # Valor fijo razonable para la mayoría de partidas
+
 @jax.jit
-def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) -> GameState:
+def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) -> tuple:
     """
     Simula una mano completa de póker (hasta 4 rondas de apuestas).
-    Args:
-        initial_state: Estado inicial del juego.
-        policy_logits: (6, 14) logits de política para cada jugador.
-        key: PRNGKey de JAX para muestreo estocástico.
-    Returns:
-        GameState final tras la mano.
+    Devuelve (final_state, history_array)
     """
-    def body_fun(street_idx, state_and_key):
-        state, key = state_and_key
+    def body_fun(street_idx, carry):
+        state, key, history, action_counter = carry
         # Reparto real de cartas comunitarias
         def deal_cards(state):
             return jax.lax.switch(
@@ -339,22 +336,43 @@ def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) 
                 state
             )
         state = deal_cards(state)
-        # Ejecuta la ronda de apuestas
+        # Ejecuta la ronda de apuestas y guarda el historial de acciones
         key, subkey = jax.random.split(key)
-        state_after_round = run_betting_round(state, policy_logits, subkey)
-        # Comprueba si la mano ha terminado (solo un jugador activo)
-        num_active = jnp.sum(state_after_round.player_status != 1)
-        def early_exit(_):
-            return (state_after_round, key)
-        def continue_game(_):
-            return (state_after_round, key)
-        state_and_key = jax.lax.cond(num_active == 1, early_exit, continue_game, operand=None)
-        return state_and_key
+        def betting_body(betting_carry):
+            state, key, history, action_counter, done = betting_carry
+            player_idx = state.current_player_idx[0]
+            logits = policy_logits[player_idx]
+            legal_mask = get_legal_actions(state)
+            masked_logits = jnp.where(legal_mask, logits, -1e9)
+            key, subkey = jax.random.split(key)
+            action = jax.random.categorical(subkey, masked_logits)
+            new_state = step(state, action)
+            # Guarda la acción en el historial
+            history = history.at[action_counter].set(action)
+            action_counter = action_counter + 1
+            # Condición de parada: la ronda termina cuando todos han actuado y las apuestas están igualadas
+            player_idx = new_state.current_player_idx[0]
+            bets_equal = (new_state.bets[player_idx] == jnp.max(new_state.bets))
+            num_active = jnp.sum(new_state.player_status == 0)
+            all_acted = (new_state.num_players_acted_this_round[0] >= num_active)
+            done = bets_equal & all_acted
+            return (new_state, key, history, action_counter, done)
+        # Inicializa el bucle de apuestas
+        done = False
+        betting_carry = (state, subkey, history, action_counter, done)
+        def cond_fun(betting_carry):
+            return ~betting_carry[4]
+        betting_carry = jax.lax.while_loop(cond_fun, betting_body, betting_carry)
+        state, key, history, action_counter, _ = betting_carry
+        return (state, key, history, action_counter)
 
-    final_state, _ = jax.lax.fori_loop(
-        0, 4, body_fun, (initial_state, key)
+    # Inicializa el historial y el contador de acciones
+    history = jnp.full((MAX_GAME_LENGTH,), -1, dtype=jnp.int32)
+    action_counter = 0
+    final_state, _, final_history, _ = jax.lax.fori_loop(
+        0, 4, body_fun, (initial_state, key, history, action_counter)
     )
-    return final_state
+    return final_state, final_history
 
 @jax.jit
 def resolve_showdown(state: GameState) -> jnp.ndarray:
@@ -441,6 +459,8 @@ def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState
 def batch_play_game(batch_size: int, policy_logits: jnp.ndarray, key: Array):
     keys = jax.random.split(key, batch_size)
     initial_states = batch_create_initial_state(keys)
-    final_states = batch_play_game_vmapped(initial_states, policy_logits, keys)
+    # Vectoriza play_game para devolver también histories
+    play_game_vmapped = jax.vmap(play_game, in_axes=(0, None, 0))
+    final_states, histories = play_game_vmapped(initial_states, policy_logits, keys)
     payoffs = batch_resolve_showdown(final_states)
-    return final_states, payoffs 
+    return final_states, payoffs, histories 
