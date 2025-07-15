@@ -40,7 +40,7 @@ class PokerTrainer:
             key = jax.random.PRNGKey(self.iteration)
             
             # Pasamos los arrays como argumentos para que JIT funcione correctamente
-            self.regrets, self.strategies = jit_train_step(key, self.regrets, self.strategies)
+            self.regrets, self.strategies = jit_train_step(key, self.regrets, self.strategies, self.config)
             
             self.iteration += 1
             if (self.iteration % save_interval == 0):
