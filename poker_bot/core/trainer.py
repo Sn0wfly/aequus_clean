@@ -27,6 +27,7 @@ import pyspiel
 from poker_bot.core.cfr_gpu import cfr_step_gpu
 from poker_bot.core.mccfr_gpu import mccfr_rollout_gpu
 import functools
+from . import full_game_engine as fge
 
 logger = logging.getLogger(__name__)
 
@@ -345,8 +346,20 @@ class PokerTrainer:
         total_info_sets = batch_size * num_players
         logger.info(f"   🚀 DEFINITIVE processing: {batch_size} games × {num_players} players = {total_info_sets} info sets")
 
-        # 1. Simulación (ya está en GPU)
-        # game_results = batch_simulate_real_holdem(...)
+        rng_policy, rng_sim = jax.random.split(jax.random.PRNGKey(self.iteration))
+        policy_logits = jax.random.normal(rng_policy, (6, 14))
+
+        final_states, payoffs = fge.batch_play_game(
+            batch_size=self.config.batch_size,
+            policy_logits=policy_logits,
+            key=rng_sim
+        )
+
+        # Usa 'payoffs' y 'final_states' en vez de 'game_results'
+        # Adapta el resto del código para usar estos nuevos outputs
+        # Por ejemplo, si antes usabas game_results['payoffs'], ahora usa 'payoffs'
+        # ...
+        # return lo que corresponda
 
         # Calcula num_active una sola vez
         num_active = jnp.sum(game_results['hole_cards'][:, :, 0] != -1, axis=1)
