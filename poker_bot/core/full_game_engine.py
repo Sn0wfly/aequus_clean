@@ -204,3 +204,47 @@ def play_one_game(key):
 
 play_one_game_jit = jax.jit(play_one_game)
 batch_play = jax.vmap(play_one_game_jit)
+
+# --------------------------------------------------
+# API que espera trainer.py
+# --------------------------------------------------
+@jax.jit
+def initial_state_for_idx(idx: int) -> GameState:
+    """
+    Devuelve el estado inicial correspondiente al juego `idx`
+    dentro del batch.  Como nuestro motor es stateless,
+    generamos el mismo estado que produciría `play_one_game`
+    pero sin ejecutar todo el juego.
+    """
+    # Simulamos la misma semilla que usaría `batch_play`
+    master_key = jax.random.PRNGKey(0)
+    key = jax.random.fold_in(master_key, idx)
+    deck = jax.random.permutation(key, jnp.arange(52, dtype=jnp.int8))
+    key, subkey = jax.random.split(key)
+    stacks = jnp.full((6,), 1000.0)
+    bets = jnp.zeros((6,)).at[0].set(5.0).at[1].set(10.0)
+    stacks = stacks.at[0].add(-5.0).at[1].add(-10.0)
+    return GameState(
+        stacks=stacks,
+        bets=bets,
+        player_status=jnp.zeros((6,), dtype=jnp.int8),
+        hole_cards=deck[:12].reshape((6, 2)),
+        comm_cards=jnp.full((5,), -1, dtype=jnp.int8),
+        cur_player=jnp.array([2], dtype=jnp.int8),
+        street=jnp.array([0], dtype=jnp.int8),
+        pot=jnp.array([15.0]),
+        deck=deck,
+        deck_ptr=jnp.array([12], dtype=jnp.int8),
+        acted_this_round=jnp.array([0], dtype=jnp.int8),
+        key=subkey,
+        action_hist=jnp.full((MAX_GAME_LENGTH,), -1, dtype=jnp.int32),
+        hist_ptr=jnp.array([0], dtype=jnp.int32)
+    )
+
+
+def batch_play(keys):
+    """
+    Entrada:  keys con shape (batch_size,)
+    Salida:   payoffs (batch, 6) , histories (batch, MAX_GAME_LENGTH)
+    """
+    return jax.vmap(play_one_game)(keys)
