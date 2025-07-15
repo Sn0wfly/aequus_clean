@@ -5,6 +5,7 @@ import logging
 import pickle
 from dataclasses import dataclass
 from . import full_game_engine as fge
+from jax import Array
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class PokerTrainer:
         
         return dummy_indices, dummy_regrets
 
-    def train_step(self, key: jax.random.KeyArray):
+    def train_step(self, key: Array):
         # 1. Simulación
         # La política se toma de las estrategias actuales.
         # Para batch_play_game, necesitamos logits, no probabilidades. Usaremos los regrets como logits.
