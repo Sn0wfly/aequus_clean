@@ -396,18 +396,28 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
 
     def showdown_case(_):
         def player_hand_eval(i):
+            # Cogemos las cartas de mano del jugador.
             hole = state.hole_cards[i]
+
+            # Hacemos un CORTE ESTÁTICO de tamaño 5 de las cartas comunitarias.
+            all_possible_community = state.community_cards
+
+            # Creamos una MÁSCARA para saber cuáles de estas 5 cartas son válidas.
             num_community_cards = state.deck_pointer[0] - 12
-            comm = jax.lax.dynamic_slice(
-                state.community_cards,
-                (0,),
-                (num_community_cards,)
-            )
-            cards = jnp.concatenate([hole, comm], axis=0)
+            valid_mask = jnp.arange(5) < num_community_cards
+
+            # Usamos jnp.where para mantener solo las cartas válidas y poner -1 en las demás.
+            comm = jnp.where(valid_mask, all_possible_community, -1)
+
+            # Filtramos los -1 en el array final que pasamos al evaluador.
+            all_cards = jnp.concatenate([hole, comm])
+            valid_cards_mask = all_cards != -1
+            final_cards = all_cards[valid_cards_mask]
+
             strength = jax.pure_callback(
                 evaluate_hand_wrapper,
                 ShapeDtypeStruct((), jnp.int32),
-                cards.astype(jnp.int32)
+                final_cards.astype(jnp.int32)
             )
             return strength
         idxs = jnp.arange(6)
