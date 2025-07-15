@@ -28,11 +28,12 @@ class GameState:
     pot_size: Array  # (1,)
     deck: Array  # (52,)
     deck_pointer: Array  # (1,)
+    num_players_acted_this_round: Array  # (1,)
 
     def tree_flatten(self):
         children = (self.stacks, self.bets, self.player_status, self.hole_cards,
                     self.community_cards, self.current_player_idx, self.street,
-                    self.pot_size, self.deck, self.deck_pointer)
+                    self.pot_size, self.deck, self.deck_pointer, self.num_players_acted_this_round)
         aux_data = None
         return (children, aux_data)
 
@@ -212,25 +213,63 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
     print("--- Iniciando run_betting_round ---")
     if key is None:
         key = jax.random.PRNGKey(0)
-    max_steps = 30
 
-    def _betting_step(state_and_key, step_idx):
-        state, key = state_and_key
+    def cond_fun(loop_state):
+        state, _ = loop_state
         player_idx = state.current_player_idx[0]
-        print(f"  Paso de ronda: {step_idx}, Turno del jugador: {player_idx}")
+        bets_equal = (state.bets[player_idx] == jnp.max(state.bets))
+        num_active = jnp.sum(state.player_status == 0)
+        all_acted = (state.num_players_acted_this_round[0] >= num_active)
+        return ~(bets_equal & all_acted)
+
+    def body_fun(loop_state):
+        state, key = loop_state
+        player_idx = state.current_player_idx[0]
         logits = policy_logits[player_idx]
         legal_mask = get_legal_actions(state)
         masked_logits = jnp.where(legal_mask, logits, -1e9)
         key, subkey = jax.random.split(key)
         action = jax.random.categorical(subkey, masked_logits)
         new_state = step(state, action)
-        return (new_state, key), new_state
 
-    (final_state, _), states = jax.lax.scan(
-        _betting_step,
-        (initial_state, key),
-        xs=jnp.arange(max_steps),
-        length=max_steps
+        # Determina el tipo de acción para actualizar el contador
+        # 1 = CHECK, 2 = CALL, 3+ = BET/RAISE
+        is_check = (action == 1)
+        is_call = (action == 2)
+        is_bet_or_raise = (action >= 3)
+        # Si BET/RAISE, resetea a 1; si CHECK/CALL, suma 1
+        new_num_acted = jnp.where(is_bet_or_raise, jnp.array([1]), state.num_players_acted_this_round + 1)
+        new_state = GameState(
+            stacks=new_state.stacks,
+            bets=new_state.bets,
+            player_status=new_state.player_status,
+            hole_cards=new_state.hole_cards,
+            community_cards=new_state.community_cards,
+            current_player_idx=new_state.current_player_idx,
+            street=new_state.street,
+            pot_size=new_state.pot_size,
+            deck=new_state.deck,
+            deck_pointer=new_state.deck_pointer,
+            num_players_acted_this_round=new_num_acted
+        )
+        return (new_state, key)
+
+    # Ejecuta el while_loop
+    final_state, _ = jax.lax.while_loop(cond_fun, body_fun, (initial_state, key))
+
+    # Resetea el contador para la siguiente ronda
+    final_state = GameState(
+        stacks=final_state.stacks,
+        bets=final_state.bets,
+        player_status=final_state.player_status,
+        hole_cards=final_state.hole_cards,
+        community_cards=final_state.community_cards,
+        current_player_idx=final_state.current_player_idx,
+        street=final_state.street,
+        pot_size=final_state.pot_size,
+        deck=final_state.deck,
+        deck_pointer=final_state.deck_pointer,
+        num_players_acted_this_round=jnp.array([0])
     )
     return final_state
 
