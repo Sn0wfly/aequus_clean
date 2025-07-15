@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import Array
 from dataclasses import dataclass
 from typing import Optional
-from poker_bot.evaluator import evaluate_hand
+from poker_bot.evaluator import HandEvaluator
 
 @dataclass
 class GameState:
@@ -290,7 +290,7 @@ def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: jax.ran
     final_state, _ = jax.lax.fori_loop(
         0, 4, body_fun, (initial_state, key)
     )
-    return final_state 
+    return final_state
 
 @jax.jit
 def resolve_showdown(state: GameState) -> jnp.ndarray:
@@ -298,11 +298,11 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
     Calcula los payoffs finales para cada jugador al terminar la mano.
     Devuelve un array (6,) con las ganancias/pérdidas de cada jugador.
     """
-    # 1. ¿Solo queda un jugador activo?
     active_mask = (state.player_status != 1)
     num_active = jnp.sum(active_mask)
     pot = state.pot_size[0]
     bets = state.bets
+    evaluator = HandEvaluator()
 
     def single_winner_case(_):
         winner = jnp.argmax(active_mask)
@@ -313,7 +313,13 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
     def showdown_case(_):
         # Solo jugadores activos
         def player_hand_eval(i):
-            return evaluate_hand(state.hole_cards[i], state.community_cards)
+            # Junta las cartas de mano y comunitarias, ignora comunitarias no repartidas (-1)
+            hole = state.hole_cards[i]
+            comm = state.community_cards[state.community_cards != -1]
+            cards = jnp.concatenate([hole, comm], axis=0)
+            # Convierte a lista de ints para el evaluador
+            cards_list = list(map(int, cards.tolist()))
+            return evaluator.evaluate_single(cards_list)
         idxs = jnp.arange(6)
         hand_strengths = jax.vmap(lambda i: jax.lax.cond(active_mask[i], player_hand_eval, lambda _: -1, i))(idxs)
         max_strength = jnp.max(hand_strengths)
@@ -324,7 +330,7 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
         return payoffs
 
     payoffs = jax.lax.cond(num_active == 1, single_winner_case, showdown_case, operand=None)
-    return payoffs 
+    return payoffs
 
 # Vectoriza la creación de estados
 batch_create_initial_state = jax.vmap(create_initial_state)
