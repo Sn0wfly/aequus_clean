@@ -209,42 +209,38 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
     max_steps = 30
 
     def _betting_step(carry, _):
-        state, key = carry
+        state, key = carry  # Desempaquetar
+
+        # Condición de parada: si la ronda ya terminó, no hagas nada.
         player_idx = state.current_player_idx[0]
         bets_equal = (state.bets[player_idx] == jnp.max(state.bets))
         num_active = jnp.sum(state.player_status == 0)
         all_acted = (state.num_players_acted_this_round[0] >= num_active)
         is_round_over = bets_equal & all_acted
 
-        def do_nothing(carry):
-            return carry  # Devuelve la tupla original sin cambios
+        # Lógica de un paso de acción (se ejecuta siempre, pero se descarta si la ronda ha terminado)
+        player_idx_action = state.current_player_idx[0]
+        logits = policy_logits[player_idx_action]
+        legal_mask = get_legal_actions(state)
+        masked_logits = jnp.where(legal_mask, logits, -1e9)
+        action_key, next_key = jax.random.split(key)
+        action = jax.random.categorical(action_key, masked_logits)
+        state_after_action = step(state, action)
+        # Actualiza el contador de "acted"
+        is_bet_or_raise = (action >= 3)
+        new_num_acted = jnp.where(is_bet_or_raise, 1, state.num_players_acted_this_round[0] + 1)
+        state_after_action = state_after_action.tree_replace({'num_players_acted_this_round': jnp.array([new_num_acted])})
 
-        def do_action_step(carry):
-            state, key = carry
-            logits = policy_logits[player_idx]
-            legal_mask = get_legal_actions(state)
-            masked_logits = jnp.where(legal_mask, logits, -1e9)
-            key, subkey = jax.random.split(key)
-            action = jax.random.categorical(subkey, masked_logits)
-            new_state = step(state, action)
-            is_bet_or_raise = (action >= 3)
-            new_num_acted = jnp.where(is_bet_or_raise, jnp.array([1]), state.num_players_acted_this_round + 1)
-            new_state = GameState(
-                stacks=new_state.stacks,
-                bets=new_state.bets,
-                player_status=new_state.player_status,
-                hole_cards=new_state.hole_cards,
-                community_cards=new_state.community_cards,
-                current_player_idx=new_state.current_player_idx,
-                street=new_state.street,
-                pot_size=new_state.pot_size,
-                deck=new_state.deck,
-                deck_pointer=new_state.deck_pointer,
-                num_players_acted_this_round=new_num_acted
-            )
-            return (new_state, key)  # Devuelve la nueva tupla
-
-        return jax.lax.cond(is_round_over, do_nothing, do_action_step, carry)
+        # Usa jax.lax.cond para ELEGIR QUÉ ESTADO DEVOLVER
+        # Si la ronda ha terminado, devuelve el estado original ('state').
+        # Si no, devuelve el estado nuevo ('state_after_action').
+        final_state_for_this_step = jax.lax.cond(
+            is_round_over,
+            lambda: state,
+            lambda: state_after_action
+        )
+        # La función SIEMPRE devuelve una tupla de la misma forma que la entrada 'carry'.
+        return (final_state_for_this_step, next_key), None  # El segundo elemento es el 'ys' que no usamos
 
     # Ejecuta el scan con un número fijo de pasos
     (final_state, _), _ = jax.lax.scan(_betting_step, (initial_state, key), xs=None, length=max_steps)
