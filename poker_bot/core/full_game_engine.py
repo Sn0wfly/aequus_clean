@@ -172,7 +172,7 @@ def step(state: GameState, action: int) -> GameState:
     return action_fn(jnp.clip(action, 0, 13))
 
 @jax.jit
-def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: jax.random.KeyArray = None) -> GameState:
+def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: Array = None) -> GameState:
     """
     Simula una ronda de apuestas completa usando la política dada (logits) para cada jugador.
     Args:
@@ -206,7 +206,7 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
     return final_state
 
 @jax.jit
-def create_initial_state(key: jax.random.KeyArray) -> GameState:
+def create_initial_state(key: Array) -> GameState:
     # Baraja la baraja
     deck = jnp.arange(52)
     key, subkey = jax.random.split(key)
@@ -260,7 +260,7 @@ def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState
     )
 
 @jax.jit
-def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: jax.random.KeyArray) -> GameState:
+def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) -> GameState:
     """
     Simula una mano completa de póker (hasta 4 rondas de apuestas).
     Args:
@@ -352,7 +352,7 @@ def _resolve_showdown_vmapped(state_batch):
     return jax.vmap(resolve_showdown)(state_batch)
 batch_resolve_showdown = _resolve_showdown_vmapped
 
-def batch_play_game(batch_size: int, policy_logits: jnp.ndarray, key: jax.random.KeyArray):
+def batch_play_game(batch_size: int, policy_logits: jnp.ndarray, key: Array):
     keys = jax.random.split(key, batch_size)
     initial_states = batch_create_initial_state(keys)
     final_states = batch_play_game_vmapped(initial_states, policy_logits, keys)
