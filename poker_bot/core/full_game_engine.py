@@ -150,10 +150,10 @@ def play_street(state: GameState, num_cards: int) -> GameState:
 # ---------- Showdown ----------
 def resolve_showdown(state: GameState) -> jax.Array:
     active = state.player_status != 1
-    pot = state.pot
+    pot_scalar = jnp.squeeze(state.pot)
     def single():
         winner = jnp.argmax(active)
-        return -state.bets.at[winner].add(pot)
+        return -state.bets.at[winner].add(pot_scalar)
     def full():
         def eval_i(i):
             cards = jnp.concatenate([state.hole_cards[i], state.comm_cards])
@@ -161,7 +161,7 @@ def resolve_showdown(state: GameState) -> jax.Array:
         strengths = jnp.array([lax.cond(active[i], lambda: eval_i(i), lambda: 9999) for i in range(6)])
         best = jnp.min(strengths)
         winners = (strengths == best) & active
-        share = pot / jnp.maximum(1, winners.sum())
+        share = pot_scalar / jnp.maximum(1, winners.sum())
         return -state.bets + winners * share
     can_show = (state.comm_cards != -1).sum() >= 5
     return lax.cond(active.sum() <= 1, single, lambda: lax.cond(can_show, full, single))
