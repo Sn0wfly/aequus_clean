@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from typing import Dict, List, Tuple
 import logging
+import time
 from poker_bot.core.jax_game_engine import (
     create_initial_state, simulate_game, batch_simulate,
     get_legal_actions, apply_action, is_round_complete, advance_round
