@@ -149,9 +149,13 @@ def play_game(initial_state: GameState, policy_logits: Array, key: Array):
     def street_loop_body(street_idx, state_key_tuple):
         state, key = state_key_tuple
         
+        # Definimos el número de cartas a repartir para cada calle
+        num_cards_to_deal = jnp.array([0, 3, 1, 1])
+        num_cards = num_cards_to_deal[street_idx]
+
         # Repartir cartas si no es preflop
         state = jax.lax.cond(street_idx > 0,
-                             lambda s: _deal_community_cards(s, jax.lax.switch(street_idx, [0, 3, 1, 1])),
+                             lambda s: _deal_community_cards(s, num_cards),
                              lambda s: s,
                              state)
         
