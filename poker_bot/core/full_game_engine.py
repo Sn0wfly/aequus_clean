@@ -397,9 +397,10 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
     def showdown_case(_):
         def player_hand_eval(i):
             hole = state.hole_cards[i]
-            comm = state.community_cards[state.community_cards != -1]
+            # El número de cartas comunitarias repartidas es deck_pointer - 12
+            num_community_cards = state.deck_pointer[0] - 12
+            comm = state.community_cards[:num_community_cards]
             cards = jnp.concatenate([hole, comm], axis=0)
-            # Llama al evaluador externo usando pure_callback
             strength = jax.pure_callback(
                 evaluate_hand_wrapper,
                 ShapeDtypeStruct((), jnp.int32),
