@@ -157,7 +157,12 @@ def resolve_showdown(state: GameState) -> jax.Array:
     def full():
         def eval_i(i):
             cards = jnp.concatenate([state.hole_cards[i], state.comm_cards])
-            return jax.pure_callback(evaluate_hand_wrapper, ShapeDtypeStruct((), np.int32), cards)
+            return jax.pure_callback(
+                evaluate_hand_wrapper,
+                ShapeDtypeStruct((), np.int32),
+                cards,
+                vmap_method='sequential'
+            )
         strengths = jnp.array([lax.cond(active[i], lambda: eval_i(i), lambda: 9999) for i in range(6)])
         best = jnp.min(strengths)
         winners = (strengths == best) & active
