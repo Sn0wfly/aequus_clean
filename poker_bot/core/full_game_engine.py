@@ -7,6 +7,7 @@ import numpy as np
 from jax import ShapeDtypeStruct
 from poker_bot.evaluator import HandEvaluator
 from jax.tree_util import register_pytree_node_class
+from functools import partial
 
 evaluator = HandEvaluator()
 
@@ -248,17 +249,14 @@ def create_initial_state(key: Array) -> GameState:
         deck_pointer=deck_pointer
     )
 
-@jax.jit
+@partial(jax.jit, static_argnums=1)
 def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState:
-    # Reparte num_cards_to_deal cartas del deck a las posiciones libres de community_cards
     start = state.deck_pointer[0]
-    # Extrae las cartas usando dynamic_slice para compatibilidad JIT
     cards = jax.lax.dynamic_slice(
         state.deck,
         (start,),
         (num_cards_to_deal,)
     )
-    # Encuentra las posiciones libres (-1) en community_cards
     mask = (state.community_cards == -1)
     idxs = jnp.where(mask, size=num_cards_to_deal, fill_value=0)[0]
     new_community = state.community_cards.at[idxs[:num_cards_to_deal]].set(cards)
