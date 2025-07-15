@@ -121,7 +121,8 @@ class PokerTrainer:
         self.strategies = jnp.array(model_data['strategies'])
         self.iteration = model_data['iteration']
         self.config = model_data['config']
-        logger.info(f"📂 Modelo cargado desde: {path}")import jax
+        logger.info(f"📂 Modelo cargado desde: {path}")
+
 import jax.numpy as jnp
 import numpy as np
 import logging
