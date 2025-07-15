@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from dataclasses import dataclass, replace
+from functools import partial
 import numpy as np
 from jax.tree_util import register_pytree_node_class
 from jax import ShapeDtypeStruct
@@ -49,8 +50,6 @@ def evaluate_hand_wrapper(cards_device):
     return np.int32(evaluator.evaluate_single(valid_cards)) if len(valid_cards) >= 5 else np.int32(9999)
 
 # ---------- Helpers ----------
-from dataclasses import replace
-
 @jax.jit
 def next_active_player(ps, start):
     idx = (start + jnp.arange(6, dtype=jnp.int8)) % 6
@@ -88,11 +87,12 @@ def apply_action(state, action):
     to_call = max_bet - current
 
     def do_fold(s):
-        return s.replace(player_status=s.player_status.at[p].set(1))
+        return replace(s, player_status=s.player_status.at[p].set(1))
 
     def do_check_call(s):
         amt = jnp.where(to_call > 0, to_call, 0.0)
-        return s.replace(
+        return replace(
+            s,
             stacks=s.stacks.at[p].add(-amt),
             bets=s.bets.at[p].add(amt),
             pot=s.pot + amt
@@ -100,7 +100,8 @@ def apply_action(state, action):
 
     def do_bet_raise(s):
         amt = jnp.minimum(20.0, s.stacks[p])
-        return s.replace(
+        return replace(
+            s,
             stacks=s.stacks.at[p].add(-amt),
             bets=s.bets.at[p].add(amt),
             pot=s.pot + amt
@@ -108,7 +109,8 @@ def apply_action(state, action):
 
     state2 = lax.switch(jnp.clip(action, 0, 2), [do_fold, do_check_call, do_bet_raise], state)
     new_hist = state2.action_hist.at[state2.hist_ptr[0]].set(action)
-    return state2.replace(
+    return replace(
+        state2,
         action_hist=new_hist,
         hist_ptr=state2.hist_ptr + 1,
         acted_this_round=state2.acted_this_round + 1
@@ -119,10 +121,10 @@ def _betting_body(state):
     legal = get_legal_actions(state)
     key, subkey = jax.random.split(state.key)
     action = jax.random.categorical(subkey, jnp.where(legal, 0.0, -1e9))
-    state = state.replace(key=key)
+    state = replace(state, key=key)
     state = apply_action(state, action)
     next_p = next_active_player(state.player_status, (state.cur_player[0] + 1) % 6)
-    return state.replace(cur_player=jnp.array([next_p], dtype=jnp.int8))
+    return replace(state, cur_player=jnp.array([next_p], dtype=jnp.int8))
 
 @jax.jit
 def run_betting_round(init_state):
@@ -142,7 +144,6 @@ def play_street(state: GameState, num_cards: int) -> GameState:
             acted_this_round=jnp.array([0], dtype=jnp.int8),
             cur_player=jnp.array([0], dtype=jnp.int8)
         )
-
     state = lax.cond(num_cards > 0, deal, lambda x: x, state)
     return run_betting_round(state)
 
@@ -150,11 +151,9 @@ def play_street(state: GameState, num_cards: int) -> GameState:
 def resolve_showdown(state: GameState) -> jax.Array:
     active = state.player_status != 1
     pot = state.pot
-
     def single():
         winner = jnp.argmax(active)
         return -state.bets.at[winner].add(pot)
-
     def full():
         def eval_i(i):
             cards = jnp.concatenate([state.hole_cards[i], state.comm_cards])
@@ -164,7 +163,6 @@ def resolve_showdown(state: GameState) -> jax.Array:
         winners = (strengths == best) & active
         share = pot / jnp.maximum(1, winners.sum())
         return -state.bets + winners * share
-
     can_show = (state.comm_cards != -1).sum() >= 5
     return lax.cond(active.sum() <= 1, single, lambda: lax.cond(can_show, full, single))
 
@@ -176,7 +174,6 @@ def play_one_game(key):
     stacks = jnp.full((6,), 1000.0)
     bets = jnp.zeros((6,)).at[0].set(5.0).at[1].set(10.0)
     stacks = stacks.at[0].add(-5.0).at[1].add(-10.0)
-
     state = GameState(
         stacks=stacks,
         bets=bets,
@@ -193,7 +190,6 @@ def play_one_game(key):
         action_hist=jnp.full((MAX_GAME_LENGTH,), -1, dtype=jnp.int32),
         hist_ptr=jnp.array([0], dtype=jnp.int32)
     )
-
     state = play_street(state, 3)  # flop
     state = play_street(state, 1)  # turn
     state = play_street(state, 1)  # river
@@ -201,10 +197,5 @@ def play_one_game(key):
     return payoffs, state.action_hist
 
 # ---------- Batch API ----------
-@jax.jit
-def initial_state_for_idx(idx: int) -> GameState:
-    key = jax.random.fold_in(jax.random.PRNGKey(0), idx)
-    return play_one_game(key)[0]  # devuelve solo el estado inicial
-
 def batch_play(keys):
     return jax.vmap(play_one_game)(keys)
