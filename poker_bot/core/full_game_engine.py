@@ -13,7 +13,7 @@ from poker_bot.evaluator import HandEvaluator
 MAX_GAME_LENGTH = 60
 evaluator = HandEvaluator()
 
-# ---------- Pytree dataclass ----------
+# ---------- Pytree dataclass -----------
 @register_pytree_node_class
 @dataclass
 class GameState:
