@@ -229,7 +229,19 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
         # Actualiza el contador de "acted"
         is_bet_or_raise = (action >= 3)
         new_num_acted = jnp.where(is_bet_or_raise, 1, state.num_players_acted_this_round[0] + 1)
-        state_after_action = state_after_action.tree_replace({'num_players_acted_this_round': jnp.array([new_num_acted])})
+        state_after_action = GameState(
+            stacks=state_after_action.stacks,
+            bets=state_after_action.bets,
+            player_status=state_after_action.player_status,
+            hole_cards=state_after_action.hole_cards,
+            community_cards=state_after_action.community_cards,
+            current_player_idx=state_after_action.current_player_idx,
+            street=state_after_action.street,
+            pot_size=state_after_action.pot_size,
+            deck=state_after_action.deck,
+            deck_pointer=state_after_action.deck_pointer,
+            num_players_acted_this_round=jnp.array([new_num_acted])
+        )
 
         # Usa jax.lax.cond para ELEGIR QUÉ ESTADO DEVOLVER
         # Si la ronda ha terminado, devuelve el estado original ('state').
