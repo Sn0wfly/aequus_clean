@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from typing import Dict, List, Tuple, Optional, NamedTuple
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 import logging
 
@@ -111,15 +111,13 @@ class EliteGameEngine:
         self.big_blind = big_blind
         self.max_players = 6
         
-    @jax.jit
     def _create_deck(self, rng_key: jnp.ndarray) -> jnp.ndarray:
         """Create and shuffle a standard 52-card deck"""
         return jax.random.permutation(rng_key, jnp.arange(52))
     
-    @jax.jit
     def _deal_cards(self, deck: jnp.ndarray, start_idx: int, num_cards: int) -> Tuple[jnp.ndarray, int]:
         """Deal cards from the deck"""
-        cards = lax.dynamic_slice(deck, (start_idx,), (num_cards,))
+        cards = deck[start_idx:start_idx + num_cards]
         return cards, start_idx + num_cards
     
     def _initialize_game(self, rng_key: jnp.ndarray, starting_stacks: jnp.ndarray) -> GameState:
@@ -256,7 +254,7 @@ class EliteGameEngine:
                 3
             )
             new_community = game_state.community_cards.at[0:3].set(cards)
-            return game_state._replace(
+            return replace(game_state,
                 community_cards=new_community,
                 deck_index=new_deck_idx
             )
@@ -268,7 +266,7 @@ class EliteGameEngine:
                 1
             )
             new_community = game_state.community_cards.at[3:4].set(cards)
-            return game_state._replace(
+            return replace(game_state,
                 community_cards=new_community,
                 deck_index=new_deck_idx
             )
@@ -280,7 +278,7 @@ class EliteGameEngine:
                 1
             )
             new_community = game_state.community_cards.at[4:5].set(cards)
-            return game_state._replace(
+            return replace(game_state,
                 community_cards=new_community,
                 deck_index=new_deck_idx
             )
@@ -433,7 +431,7 @@ class EliteGameEngine:
         # Reset current bets
         new_players = []
         for player in game_state.players:
-            new_player = player._replace(current_bet=0.0)
+            new_player = replace(player, current_bet=0.0)
             new_players.append(new_player)
         
         # Calculate side pots
@@ -451,7 +449,7 @@ class EliteGameEngine:
                     net = payoffs[player.player_id] - player.total_bet
                     payoffs = payoffs.at[player.player_id].set(net)
             
-            return game_state._replace(
+            return replace(game_state,
                 players=new_players,
                 side_pots=side_pots,
                 phase=GamePhase.FINISHED
@@ -467,14 +465,14 @@ class EliteGameEngine:
                 side_pots=side_pots
             ))
             
-            return game_state._replace(
+            return replace(game_state,
                 players=new_players,
                 side_pots=side_pots,
                 phase=GamePhase.FINISHED
             )
         
         # Deal community cards for next round
-        updated_state = self._deal_community_cards(game_state._replace(
+        updated_state = self._deal_community_cards(replace(game_state,
             players=new_players,
             current_round=next_round,
             current_player=0,  # First to act after blinds
