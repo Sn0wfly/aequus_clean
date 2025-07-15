@@ -128,7 +128,19 @@ def step(state: GameState, action: int) -> GameState:
 
     def do_fold(state):
         new_player_status = state.player_status.at[player_idx].set(1)
-        return state.tree_replace({'player_status': new_player_status})
+        return GameState(
+            stacks=state.stacks,
+            bets=state.bets,
+            player_status=new_player_status,
+            hole_cards=state.hole_cards,
+            community_cards=state.community_cards,
+            current_player_idx=state.current_player_idx,
+            street=state.street,
+            pot_size=state.pot_size,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
+        )
 
     def do_check(state):
         # No cambios en stacks ni bets
@@ -139,14 +151,38 @@ def step(state: GameState, action: int) -> GameState:
         new_stack = state.stacks.at[player_idx].add(-amount_to_call)
         new_bet = state.bets.at[player_idx].add(amount_to_call)
         new_pot = state.pot_size.at[0].add(amount_to_call)
-        return state.tree_replace({'stacks': new_stack, 'bets': new_bet, 'pot_size': new_pot})
+        return GameState(
+            stacks=new_stack,
+            bets=new_bet,
+            player_status=state.player_status,
+            hole_cards=state.hole_cards,
+            community_cards=state.community_cards,
+            current_player_idx=state.current_player_idx,
+            street=state.street,
+            pot_size=new_pot,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
+        )
 
     def do_bet_raise(state):
         bet_size = 20.0
         new_stack = state.stacks.at[player_idx].add(-bet_size)
         new_bet = state.bets.at[player_idx].add(bet_size)
         new_pot = state.pot_size.at[0].add(bet_size)
-        return state.tree_replace({'stacks': new_stack, 'bets': new_bet, 'pot_size': new_pot})
+        return GameState(
+            stacks=new_stack,
+            bets=new_bet,
+            player_status=state.player_status,
+            hole_cards=state.hole_cards,
+            community_cards=state.community_cards,
+            current_player_idx=state.current_player_idx,
+            street=state.street,
+            pot_size=new_pot,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
+        )
 
     # El switch solo calcula el estado después de la acción
     state_after_action = jax.lax.switch(
