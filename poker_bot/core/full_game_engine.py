@@ -204,3 +204,30 @@ def play_one_game(key):
 # ---------- Batch API ----------
 def batch_play(keys):
     return jax.vmap(play_one_game)(keys)
+
+@jax.jit
+def initial_state_for_idx(idx: int):
+    key = jax.random.fold_in(jax.random.PRNGKey(0), idx)
+    # Devuelve solo el estado inicial, no payoffs ni historia
+    deck = jax.random.permutation(key, jnp.arange(52, dtype=jnp.int8))
+    key, subkey = jax.random.split(key)
+    stacks = jnp.full((6,), 1000.0)
+    bets = jnp.zeros((6,)).at[0].set(5.0).at[1].set(10.0)
+    stacks = stacks.at[0].add(-5.0).at[1].add(-10.0)
+    state = GameState(
+        stacks=stacks,
+        bets=bets,
+        player_status=jnp.zeros((6,), dtype=jnp.int8),
+        hole_cards=deck[:12].reshape((6, 2)),
+        comm_cards=jnp.full((5,), -1, dtype=jnp.int8),
+        cur_player=jnp.array([2], dtype=jnp.int8),
+        street=jnp.array([0], dtype=jnp.int8),
+        pot=jnp.array([15.0]),
+        deck=deck,
+        deck_ptr=jnp.array([12], dtype=jnp.int8),
+        acted_this_round=jnp.array([0], dtype=jnp.int8),
+        key=subkey,
+        action_hist=jnp.full((MAX_GAME_LENGTH,), -1, dtype=jnp.int32),
+        hist_ptr=jnp.array([0], dtype=jnp.int32)
+    )
+    return state
