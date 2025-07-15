@@ -412,7 +412,7 @@ def _resolve_showdown_vmapped(state_batch):
     return jax.vmap(resolve_showdown)(state_batch)
 batch_resolve_showdown = _resolve_showdown_vmapped
 
-@jax.jit
+@partial(jax.jit, static_argnums=(1,))
 def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState:
     start = state.deck_pointer[0]
     cards = jax.lax.dynamic_slice(
