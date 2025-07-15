@@ -1,0 +1,30 @@
+# 🎯 PokerBot Training Configuration
+# Edit these settings to customize your training
+
+# Training Parameters
+num_iterations: 100000         # Number of MCCFR iterations
+batch_size: 1024              # Batch size for training
+learning_rate: 0.01           # Learning rate
+save_interval: 10000          # Save checkpoint every N iterations
+eval_interval: 5000           # Evaluate strategy every N iterations
+
+# Game Setup
+num_players: 2                # Number of players (2-6)
+starting_stack: 100.0         # Starting stack size
+small_blind: 1.0              # Small blind amount
+big_blind: 2.0                # Big blind amount
+
+# Abstractions
+num_card_buckets: 200         # Number of card abstraction buckets
+bet_sizes:                    # Action abstraction bet sizes (pot fractions)
+  - 0.5                       # Half pot
+  - 0.75                      # 3/4 pot
+  - 1.0                       # Full pot
+  - 1.5                       # 1.5x pot
+  - 2.0                       # 2x pot
+
+# Performance Tuning
+# Uncomment and adjust these for better performance
+# max_memory_gb: 16           # Maximum memory usage
+# gpu_memory_fraction: 0.8    # Fraction of GPU memory to use
+# jit_compile: true           # Enable JIT compilation 

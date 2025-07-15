@@ -1,0 +1,38 @@
+# 🎯 Phase 1 Enhanced Configuration
+# Quick wins for pro-level quality with minimal performance impact
+
+# Training Parameters
+num_iterations: 50000         # Reduced for Phase 1 testing
+batch_size: 32768            # H100 optimized
+learning_rate: 0.05          # Slightly reduced for stability
+save_interval: 5000          # More frequent saves for testing
+eval_interval: 2500          # More frequent evaluation
+
+# Enhanced Game Setup
+num_players: 6
+starting_stack: 100.0
+small_blind: 1.0
+big_blind: 2.0
+
+# Enhanced Bucketing (Phase 1)
+num_card_buckets: 50000      # Increased from 20k
+bet_sizes:                    # Expanded action set
+  - 0.33                      # 1/3 pot
+  - 0.5                       # 1/2 pot
+  - 0.75                      # 3/4 pot
+  - 1.0                       # Full pot
+  - 1.5                       # 1.5x pot
+  - 2.0                       # 2x pot
+  - 3.0                       # 3x pot
+  - 5.0                       # 5x pot (for ICM scenarios)
+
+# Enhanced Performance Tuning
+max_memory_gb: 8             # Increased for enhanced features
+gpu_memory_fraction: 0.9     # Use more GPU memory
+jit_compile: true            # Enable JIT for enhanced kernels
+
+# Phase 1 Specific Settings
+enhanced_evaluation: true    # Enable enhanced hand evaluation
+icm_modeling: true          # Enable ICM calculations
+history_aware: false        # Phase 2 feature
+proper_mccfr: false         # Phase 3 feature
