@@ -21,65 +21,49 @@ class PokerTrainer:
     def __init__(self, config: TrainerConfig):
         self.config = config
         self.iteration = 0
-        
-        # Inicializamos los arrays de JAX
         self.regrets = jnp.zeros((config.max_info_sets, config.num_actions))
-        
-        # La estrategia inicial es uniforme.
         self.strategies = jnp.ones((config.max_info_sets, config.num_actions)) / config.num_actions
-        
         logger.info("PokerTrainer inicializado con el nuevo motor CFR.")
 
     def train(self, num_iterations: int, save_path: str, save_interval: int):
         logger.info(f"🚀 Iniciando entrenamiento por {num_iterations} iteraciones...")
-        
-        # Compilamos el train_step una sola vez para un rendimiento óptimo
-        jit_train_step = jax.jit(self.train_step)
+
+        # Compilamos el train_step una sola vez, indicando que 'config' es estático.
+        # Usamos static_argnames para mayor claridad.
+        jit_train_step = jax.jit(
+            partial(PokerTrainer.train_step, config=self.config)
+        )
 
         for it in range(num_iterations):
             key = jax.random.PRNGKey(self.iteration)
             
-            # Pasamos los arrays como argumentos para que JIT funcione correctamente
-            self.regrets, self.strategies = jit_train_step(key, self.regrets, self.strategies, self.config)
+            # La función JIT ahora solo necesita los argumentos que cambian.
+            self.regrets, self.strategies = jit_train_step(key, self.regrets, self.strategies)
             
             self.iteration += 1
             if (self.iteration % save_interval == 0):
                 self.save_model(f"{save_path}_iter_{self.iteration}.pkl")
-            logger.info(f"Iteración {self.iteration}/{num_iterations} completada.")
+            logger.info(f"Iteración {self.iteration + 1}/{num_iterations} completada.")
         
         logger.info("🎉 Entrenamiento finalizado.")
 
-    def _cfr_backtracking(self, payoffs: jnp.ndarray, histories: jnp.ndarray):
-        # --- Placeholder para el Backtracking ---
-        num_updates = 1000
-        key = jax.random.PRNGKey(self.iteration)
-        dummy_indices = jax.random.randint(key, (num_updates,), 0, self.config.max_info_sets)
-        dummy_regrets = jax.random.normal(key, (num_updates, self.config.num_actions))
-        return dummy_indices, dummy_regrets
-
-    # Esta función ahora es estática y pura para ser compilable con JIT
     @staticmethod
     def train_step(key: Array, regrets_table: Array, strategies_table: Array, config: TrainerConfig):
         # 1. Simulación
-        # La política (logits) que guía la simulación es la estrategia actual.
-        # Un truco común es usar log(probabilidades) como logits.
-        # Para evitar log(0), añadimos un valor pequeño (epsilon).
+        # Usamos un truco para convertir probabilidades en logits para la simulación
         policy_logits = jnp.log(strategies_table + 1e-9)
         
-        sim_key, key = jax.random.split(key)
         final_states, payoffs, histories = fge.batch_play_game(
             batch_size=config.batch_size,
             policy_logits=policy_logits,
-            key=sim_key
+            key=key
         )
 
-        # 2. Backtracking para obtener regrets (usando el método estático _cfr_backtracking)
-        # Nota: El backtracking real necesitaría más información. El placeholder actual es suficiente.
-        # En una implementación real, esta lógica sería mucho más compleja.
-        # Por ahora, generamos regrets de prueba.
+        # 2. Backtracking (Placeholder)
         num_updates = 1000
-        dummy_indices = jax.random.randint(key, (num_updates,), 0, config.max_info_sets)
-        dummy_regrets = jax.random.normal(key, (num_updates, config.num_actions))
+        backtrack_key = jax.random.PRNGKey(0) # Clave fija para placeholder
+        dummy_indices = jax.random.randint(backtrack_key, (num_updates,), 0, config.max_info_sets)
+        dummy_regrets = jax.random.normal(backtrack_key, (num_updates, config.num_actions))
         indices, regrets_from_game = dummy_indices, dummy_regrets
         
         # 3. Acumular regrets
@@ -89,13 +73,11 @@ class PokerTrainer:
         current_regrets = new_regrets_table[indices]
         positive_regrets = jnp.maximum(current_regrets, 0)
         sum_pos_regrets = jnp.sum(positive_regrets, axis=1, keepdims=True)
-        
         sum_pos_regrets = jnp.where(sum_pos_regrets > 0, sum_pos_regrets, 1)
         new_strategy_subset = positive_regrets / sum_pos_regrets
 
         new_strategies_table = strategies_table.at[indices].set(new_strategy_subset)
         
-        # Devuelve los nuevos arrays
         return new_regrets_table, new_strategies_table
 
     def save_model(self, path: str):

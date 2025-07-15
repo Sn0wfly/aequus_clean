@@ -6,9 +6,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 if __name__ == "__main__":
     # 1. Crear una configuración de prueba
-    # Usamos un batch_size pequeño para que la prueba sea rápida
     config = TrainerConfig(
-        batch_size=32,
+        batch_size=128,
         num_actions=14,
         max_info_sets=50000
     )
@@ -16,11 +15,11 @@ if __name__ == "__main__":
     # 2. Crear una instancia del entrenador
     trainer = PokerTrainer(config)
 
-    # 3. Llamar al bucle de entrenamiento principal para unas pocas iteraciones
+    # 3. Llamar al bucle de entrenamiento principal
     trainer.train(
         num_iterations=10,
         save_path='test_model',
         save_interval=10
     )
 
-    print("\n✅✅✅ PRUEBA DE ENTRENAMIENTO COMPLETA Y EXITOSA ✅✅✅") 
+    print("\n✅✅✅ PRUEBA DE ENTRENAMIENTO COMPLETA Y EXITOSA ✅✅✅")
