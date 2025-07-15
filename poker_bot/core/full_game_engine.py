@@ -131,9 +131,12 @@ def run_betting_round(init_state):
 def play_street(state, num_cards):
     def deal(s):
         start = s.deck_ptr[0]
-        cards = s.deck[start:start + num_cards]
+        # Extrae exactamente `num_cards` cartas a partir de `start`
+        cards = lax.dynamic_slice(s.deck, (start,), (num_cards,))
+        # Inserta las cartas extraídas en `comm_cards` a partir de `start`
+        comm = lax.dynamic_update_slice(s.comm_cards, cards, (start,))
         return s.replace(
-            comm_cards=s.comm_cards.at[start:start + num_cards].set(cards),
+            comm_cards=comm,
             deck_ptr=s.deck_ptr + num_cards,
             acted_this_round=jnp.array([0], dtype=jnp.int8),
             cur_player=jnp.array([0], dtype=jnp.int8)
