@@ -290,6 +290,7 @@ def create_initial_state(key: Array) -> GameState:
     street = jnp.array([0])
     pot_size = jnp.array([0.0])
     deck_pointer = jnp.array([12])
+    num_players_acted_this_round = jnp.array([0])
     return GameState(
         stacks=stacks,
         bets=bets,
@@ -300,7 +301,8 @@ def create_initial_state(key: Array) -> GameState:
         street=street,
         pot_size=pot_size,
         deck=shuffled_deck,
-        deck_pointer=deck_pointer
+        deck_pointer=deck_pointer,
+        num_players_acted_this_round=num_players_acted_this_round
     )
 
 # @partial(jax.jit, static_argnums=1)
