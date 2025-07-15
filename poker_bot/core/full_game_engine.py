@@ -14,7 +14,8 @@ evaluator = HandEvaluator()
 def evaluate_hand_wrapper(cards_np: np.ndarray) -> np.int32:
     valid_cards = cards_np[cards_np != -1]
     cards_list = valid_cards.tolist()
-    if not cards_list:
+    if len(cards_list) < 5:
+        # Si no hay suficientes cartas para una mano de póker, devuelve la peor puntuación posible.
         return np.int32(9999)
     return np.int32(evaluator.evaluate_single(cards_list))
 
@@ -86,19 +87,14 @@ def get_legal_actions(state: GameState, num_actions: int = 14) -> Array:
     player_idx = state.current_player_idx[0]
     status = state.player_status[player_idx]
     can_act = (status == 0)
-    
     mask = mask.at[0].set(can_act)
-    
     current_bet = state.bets[player_idx]
     max_bet = jnp.max(state.bets)
-    
     can_check = (current_bet == max_bet)
     mask = mask.at[1].set(can_check & can_act)
-    
     to_call = max_bet - current_bet
     can_call = (to_call > 0) & (state.stacks[player_idx] >= to_call)
     mask = mask.at[2].set(can_call & can_act)
-    
     mask = mask.at[3:].set((~can_check) & can_act)
     return mask
 
@@ -115,28 +111,23 @@ def _update_turn(state: GameState) -> GameState:
 @jax.jit
 def step(state: GameState, action: int) -> GameState:
     player_idx = state.current_player_idx[0]
-
     def do_fold(s):
         new_status = s.player_status.at[player_idx].set(1)
         return GameState(**{**s.__dict__, "player_status": new_status})
-
     def do_check(s):
         return s
-
     def do_call(s):
         amount = jnp.max(s.bets) - s.bets[player_idx]
         new_stacks = s.stacks.at[player_idx].add(-amount)
         new_bets = s.bets.at[player_idx].add(amount)
         new_pot = s.pot_size + amount
         return GameState(**{**s.__dict__, "stacks": new_stacks, "bets": new_bets, "pot_size": new_pot})
-
     def do_bet_raise(s):
         bet_size = 20.0
         new_stacks = s.stacks.at[player_idx].add(-bet_size)
         new_bets = s.bets.at[player_idx].add(bet_size)
         new_pot = s.pot_size + bet_size
         return GameState(**{**s.__dict__, "stacks": new_stacks, "bets": new_bets, "pot_size": new_pot})
-
     state_after_action = jax.lax.switch(jnp.clip(action, 0, 3), [do_fold, do_check, do_call, do_bet_raise], state)
     return _update_turn(state_after_action)
 
@@ -146,22 +137,37 @@ def _deal_community_cards(state: GameState, num_to_deal: int) -> GameState:
     cards = jax.lax.dynamic_slice(state.deck, (start,), (num_to_deal,))
     num_dealt = jnp.sum(state.community_cards != -1)
     new_community = jax.lax.dynamic_update_slice(state.community_cards, cards, (num_dealt,))
-    return GameState(**{**state.__dict__, "community_cards": new_community, "deck_pointer": state.deck_pointer + num_to_deal})
+    return GameState(**{**state.__dict__, "community_cards": new_community, "deck_pointer": state.deck_pointer + num_to_deal, "street": state.street + 1})
+
+# --- Orquestación y Vectorización ---
 
 @jax.jit
-def run_betting_round(state: GameState, policy_logits: Array, key: Array):
-    def betting_step(i, carry):
-        state, key = carry
+def play_game(initial_state: GameState, policy_logits: Array, key: Array):
+    state = initial_state
+    
+    # Bucle de las calles (Preflop, Flop, Turn, River)
+    def street_loop_body(street_idx, state_key_tuple):
+        state, key = state_key_tuple
         
-        player_idx = state.current_player_idx[0]
-        bets_equal = (state.bets[player_idx] == jnp.max(state.bets))
-        all_acted = (state.num_players_acted_this_round[0] >= jnp.sum(state.player_status == 0))
-        is_round_over = bets_equal & all_acted
-
-        def perform_action(carry):
+        # Repartir cartas si no es preflop
+        state = jax.lax.cond(street_idx > 0,
+                             lambda s: _deal_community_cards(s, jax.lax.switch(street_idx, [0, 3, 1, 1])),
+                             lambda s: s,
+                             state)
+        
+        # Bucle de la ronda de apuestas
+        def betting_loop_cond(carry):
             state, key = carry
-            player_idx_action = state.current_player_idx[0]
-            logits = policy_logits[player_idx_action]
+            num_active = jnp.sum(state.player_status == 0)
+            player_idx = state.current_player_idx[0]
+            bets_equal = (state.bets[player_idx] == jnp.max(state.bets))
+            all_acted = (state.num_players_acted_this_round[0] >= num_active)
+            return (num_active > 1) & (~(bets_equal & all_acted))
+
+        def betting_loop_body(carry):
+            state, key = carry
+            player_idx = state.current_player_idx[0]
+            logits = policy_logits[player_idx]
             legal_mask = get_legal_actions(state)
             masked_logits = jnp.where(legal_mask, logits, -1e9)
             action_key, next_key = jax.random.split(key)
@@ -169,39 +175,24 @@ def run_betting_round(state: GameState, policy_logits: Array, key: Array):
             
             ac = state.action_counter[0]
             new_history = state.history.at[ac].set(action)
-            
             state_before_step = GameState(**{**state.__dict__, "history": new_history, "action_counter": state.action_counter + 1})
+            
             state_after_action = step(state_before_step, action)
 
             is_aggressive = (action >= 3)
             num_acted = jax.lax.cond(is_aggressive, lambda: 1, lambda: state.num_players_acted_this_round[0] + 1)
             final_state = GameState(**{**state_after_action.__dict__, "num_players_acted_this_round": jnp.array([num_acted])})
             return final_state, next_key
+
+        key, betting_key = jax.random.split(key)
+        state, _ = jax.lax.while_loop(betting_loop_cond, betting_loop_body, (state, betting_key))
         
-        return jax.lax.cond(is_round_over, lambda c: c, perform_action, (state, key))
+        # Resetear contador para la siguiente calle
+        state = GameState(**{**state.__dict__, "num_players_acted_this_round": jnp.array([0])})
+        return state, key
 
-    final_state, final_key = jax.lax.fori_loop(0, 30, betting_step, (state, key))
-    return GameState(**{**final_state.__dict__, "num_players_acted_this_round": jnp.array([0])})
-
-@jax.jit
-def play_game(initial_state: GameState, policy_logits: Array, key: Array):
-    state = initial_state
-    
-    key, subkey = jax.random.split(key)
-    state = run_betting_round(state, policy_logits, subkey)
-    
-    state = jax.lax.cond(jnp.sum(state.player_status != 1) > 1, lambda s: _deal_community_cards(s, 3), lambda s: s, state)
-    key, subkey = jax.random.split(key)
-    state = jax.lax.cond(jnp.sum(state.player_status != 1) > 1, lambda s: run_betting_round(s, policy_logits, subkey), lambda s: s, state)
-
-    state = jax.lax.cond(jnp.sum(state.player_status != 1) > 1, lambda s: _deal_community_cards(s, 1), lambda s: s, state)
-    key, subkey = jax.random.split(key)
-    state = jax.lax.cond(jnp.sum(state.player_status != 1) > 1, lambda s: run_betting_round(s, policy_logits, subkey), lambda s: s, state)
-
-    state = jax.lax.cond(jnp.sum(state.player_status != 1) > 1, lambda s: _deal_community_cards(s, 1), lambda s: s, state)
-    key, subkey = jax.random.split(key)
-    state = jax.lax.cond(jnp.sum(state.player_status != 1) > 1, lambda s: run_betting_round(s, policy_logits, subkey), lambda s: s, state)
-    
+    # Ejecutar el bucle de las calles
+    state, _ = jax.lax.fori_loop(0, 4, street_loop_body, (state, key))
     return state
 
 @jax.jit
@@ -223,11 +214,16 @@ def resolve_showdown(state: GameState) -> Array:
         best_strength = jnp.min(strengths)
         
         winners_mask = (strengths == best_strength) & active_mask
+        num_winners = jnp.sum(winners_mask)
         win_share = pot / jnp.sum(winners_mask)
         
         return -state.bets + (winners_mask * win_share)
-
-    return jax.lax.cond(jnp.sum(active_mask) <= 1, single_winner_case, showdown_case)
+    
+    # Solo ir a showdown si hay cartas comunitarias (es decir, post-flop)
+    # y más de un jugador activo.
+    can_showdown = (jnp.sum(state.community_cards != -1) >= 3) & (jnp.sum(active_mask) > 1)
+    
+    return jax.lax.cond(can_showdown, showdown_case, single_winner_case)
 
 def batch_play_game(batch_size: int, policy_logits: Array, key: Array):
     keys = jax.random.split(key, batch_size)
@@ -240,4 +236,4 @@ def batch_play_game(batch_size: int, policy_logits: Array, key: Array):
     final_states = vmap_play_game(initial_states, policy_logits, keys)
     payoffs = vmap_resolve_showdown(final_states)
     
-    return stacked_states, payoffs, stacked_histories, initial_states
+    return final_states, payoffs, final_states.history, initial_states
