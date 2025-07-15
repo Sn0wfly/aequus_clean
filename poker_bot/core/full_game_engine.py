@@ -49,6 +49,8 @@ def evaluate_hand_wrapper(cards_device):
     return np.int32(evaluator.evaluate_single(valid_cards)) if len(valid_cards) >= 5 else np.int32(9999)
 
 # ---------- Helpers ----------
+from dataclasses import replace
+
 @jax.jit
 def next_active_player(ps, start):
     idx = (start + jnp.arange(6, dtype=jnp.int8)) % 6
@@ -133,21 +135,12 @@ def play_street(state: GameState, num_cards: int) -> GameState:
         start = s.deck_ptr[0]
         cards = lax.dynamic_slice(s.deck, (start,), (num_cards,))
         comm = lax.dynamic_update_slice(s.comm_cards, cards, (start,))
-        return GameState(
-            stacks=s.stacks,
-            bets=s.bets,
-            player_status=s.player_status,
-            hole_cards=s.hole_cards,
+        return replace(
+            s,
             comm_cards=comm,
-            cur_player=jnp.array([0], dtype=jnp.int8),
-            street=s.street,
-            pot=s.pot,
-            deck=s.deck,
             deck_ptr=s.deck_ptr + num_cards,
             acted_this_round=jnp.array([0], dtype=jnp.int8),
-            key=s.key,
-            action_hist=s.action_hist,
-            hist_ptr=s.hist_ptr
+            cur_player=jnp.array([0], dtype=jnp.int8)
         )
 
     state = lax.cond(num_cards > 0, deal, lambda x: x, state)
