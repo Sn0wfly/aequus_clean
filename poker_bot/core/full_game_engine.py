@@ -86,6 +86,7 @@ def _update_turn(state: GameState) -> GameState:
     """
     Avanza el turno al siguiente jugador activo (player_status == 0).
     """
+    print(f"    -> Entrando en _update_turn para el jugador {state.current_player_idx[0]}")
     def cond_fun(carry):
         idx, found = carry
         return ~found
@@ -93,6 +94,7 @@ def _update_turn(state: GameState) -> GameState:
     def body_fun(carry):
         idx, _ = carry
         idx = (idx + 1) % 6
+        print(f"      -> _update_turn buscando en idx: {idx}")
         found = (state.player_status[idx] == 0)
         return (idx, found)
 
@@ -207,22 +209,15 @@ def step(state: GameState, action: int) -> GameState:
 
 # @jax.jit
 def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: Array = None) -> GameState:
-    """
-    Simula una ronda de apuestas completa usando la política dada (logits) para cada jugador.
-    Args:
-        initial_state: Estado inicial de la ronda.
-        policy_logits: (6, 14) logits de política para cada jugador.
-        key: PRNGKey de JAX para muestreo estocástico.
-    Returns:
-        GameState final tras la ronda de apuestas.
-    """
+    print("--- Iniciando run_betting_round ---")
     if key is None:
         key = jax.random.PRNGKey(0)
     max_steps = 30
 
-    def _betting_step(state_and_key, _):
+    def _betting_step(state_and_key, step_idx):
         state, key = state_and_key
         player_idx = state.current_player_idx[0]
+        print(f"  Paso de ronda: {step_idx}, Turno del jugador: {player_idx}")
         logits = policy_logits[player_idx]
         legal_mask = get_legal_actions(state)
         masked_logits = jnp.where(legal_mask, logits, -1e9)
@@ -234,7 +229,7 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
     (final_state, _), states = jax.lax.scan(
         _betting_step,
         (initial_state, key),
-        xs=None,
+        xs=jnp.arange(max_steps),
         length=max_steps
     )
     return final_state
