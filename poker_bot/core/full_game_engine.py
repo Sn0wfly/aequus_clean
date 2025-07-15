@@ -122,101 +122,45 @@ def _update_turn(state: GameState) -> GameState:
         num_players_acted_this_round=state.num_players_acted_this_round
     )
 
-@jax.jit
+# @jax.jit
 def step(state: GameState, action: int) -> GameState:
-    """
-    Aplica la acción al estado y devuelve un nuevo GameState actualizado.
-    """
     player_idx = state.current_player_idx[0]
 
     def do_fold(state):
-        # Actualiza player_status[player_idx] a 1 (Folded)
         new_player_status = state.player_status.at[player_idx].set(1)
-        new_state = GameState(
-            stacks=state.stacks,
-            bets=state.bets,
-            player_status=new_player_status,
-            hole_cards=state.hole_cards,
-            community_cards=state.community_cards,
-            current_player_idx=state.current_player_idx,
-            street=state.street,
-            pot_size=state.pot_size,
-            deck=state.deck,
-            deck_pointer=state.deck_pointer,
-            num_players_acted_this_round=state.num_players_acted_this_round
-        )
-        return _update_turn(new_state)
+        return state.tree_replace({'player_status': new_player_status})
 
     def do_check(state):
-        # No cambios, solo avanza el turno
-        new_state = GameState(
-            stacks=state.stacks,
-            bets=state.bets,
-            player_status=state.player_status,
-            hole_cards=state.hole_cards,
-            community_cards=state.community_cards,
-            current_player_idx=state.current_player_idx,
-            street=state.street,
-            pot_size=state.pot_size,
-            deck=state.deck,
-            deck_pointer=state.deck_pointer,
-            num_players_acted_this_round=state.num_players_acted_this_round
-        )
-        return _update_turn(new_state)
+        # No cambios en stacks ni bets
+        return state
 
     def do_call(state):
         amount_to_call = jnp.max(state.bets) - state.bets[player_idx]
         new_stack = state.stacks.at[player_idx].add(-amount_to_call)
         new_bet = state.bets.at[player_idx].add(amount_to_call)
         new_pot = state.pot_size.at[0].add(amount_to_call)
-        new_state = GameState(
-            stacks=new_stack,
-            bets=new_bet,
-            player_status=state.player_status,
-            hole_cards=state.hole_cards,
-            community_cards=state.community_cards,
-            current_player_idx=state.current_player_idx,
-            street=state.street,
-            pot_size=new_pot,
-            deck=state.deck,
-            deck_pointer=state.deck_pointer,
-            num_players_acted_this_round=state.num_players_acted_this_round
-        )
-        return _update_turn(new_state)
+        return state.tree_replace({'stacks': new_stack, 'bets': new_bet, 'pot_size': new_pot})
 
     def do_bet_raise(state):
         bet_size = 20.0
         new_stack = state.stacks.at[player_idx].add(-bet_size)
         new_bet = state.bets.at[player_idx].add(bet_size)
         new_pot = state.pot_size.at[0].add(bet_size)
-        new_state = GameState(
-            stacks=new_stack,
-            bets=new_bet,
-            player_status=state.player_status,
-            hole_cards=state.hole_cards,
-            community_cards=state.community_cards,
-            current_player_idx=state.current_player_idx,
-            street=state.street,
-            pot_size=new_pot,
-            deck=state.deck,
-            deck_pointer=state.deck_pointer,
-            num_players_acted_this_round=state.num_players_acted_this_round
-        )
-        return _update_turn(new_state)
+        return state.tree_replace({'stacks': new_stack, 'bets': new_bet, 'pot_size': new_pot})
 
-    # jax.lax.switch para seleccionar la acción
-    def action_fn(idx):
-        return jax.lax.switch(
-            idx,
-            [lambda _: do_fold(state),
-             lambda _: do_check(state),
-             lambda _: do_call(state)] +
-            [lambda _: do_bet_raise(state)] * 11,
-            None
-        )
+    # El switch solo calcula el estado después de la acción
+    state_after_action = jax.lax.switch(
+        jnp.clip(action, 0, 13),
+        [lambda s: do_fold(s),
+         lambda s: do_check(s),
+         lambda s: do_call(s)] +
+        [lambda s: do_bet_raise(s)] * 11,
+        state
+    )
 
-    # action: 0=FOLD, 1=CHECK, 2=CALL, 3-13=BET/RAISE
-    return action_fn(jnp.clip(action, 0, 13))
+    # El cambio de turno ocurre una sola vez aquí
+    final_state = _update_turn(state_after_action)
+    return final_state
 
 # @jax.jit
 def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: Array = None) -> GameState:
