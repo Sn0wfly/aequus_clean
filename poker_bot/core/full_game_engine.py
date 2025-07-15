@@ -108,7 +108,9 @@ def _update_turn(state: GameState) -> GameState:
         community_cards=state.community_cards,
         current_player_idx=jnp.array([idx]),
         street=state.street,
-        pot_size=state.pot_size
+        pot_size=state.pot_size,
+        deck=state.deck,
+        deck_pointer=state.deck_pointer
     )
 
 @jax.jit
