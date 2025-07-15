@@ -12,7 +12,12 @@ from functools import partial
 evaluator = HandEvaluator()
 
 def evaluate_hand_wrapper(cards_np: np.ndarray) -> int:
-    cards_list = cards_np.tolist()
+    # Filtra las cartas inválidas (-1) que usamos como relleno
+    valid_cards = cards_np[cards_np != -1]
+    cards_list = valid_cards.tolist()
+    # Si no hay cartas, devuelve un valor de fuerza mínimo
+    if not cards_list:
+        return 9999 # Un valor de fuerza muy bajo
     return evaluator.evaluate_single(cards_list)
 
 @register_pytree_node_class
@@ -398,26 +403,15 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
         def player_hand_eval(i):
             # Cogemos las cartas de mano del jugador.
             hole = state.hole_cards[i]
-
-            # Hacemos un CORTE ESTÁTICO de tamaño 5 de las cartas comunitarias.
-            all_possible_community = state.community_cards
-
-            # Creamos una MÁSCARA para saber cuáles de estas 5 cartas son válidas.
-            num_community_cards = state.deck_pointer[0] - 12
-            valid_mask = jnp.arange(5) < num_community_cards
-
-            # Usamos jnp.where para mantener solo las cartas válidas y poner -1 en las demás.
-            comm = jnp.where(valid_mask, all_possible_community, -1)
-
-            # Filtramos los -1 en el array final que pasamos al evaluador.
+            # Cogemos TODAS las 5 posibles cartas comunitarias.
+            comm = state.community_cards
+            # Las combinamos. El resultado 'all_cards' SIEMPRE tiene tamaño 7.
             all_cards = jnp.concatenate([hole, comm])
-            valid_cards_mask = all_cards != -1
-            final_cards = all_cards[valid_cards_mask]
-
+            # Llama al evaluador externo usando pure_callback con el array de tamaño fijo.
             strength = jax.pure_callback(
                 evaluate_hand_wrapper,
                 ShapeDtypeStruct((), jnp.int32),
-                final_cards.astype(jnp.int32)
+                all_cards.astype(jnp.int32)
             )
             return strength
         idxs = jnp.arange(6)
