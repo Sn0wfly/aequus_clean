@@ -397,9 +397,12 @@ def resolve_showdown(state: GameState) -> jnp.ndarray:
     def showdown_case(_):
         def player_hand_eval(i):
             hole = state.hole_cards[i]
-            # El número de cartas comunitarias repartidas es deck_pointer - 12
             num_community_cards = state.deck_pointer[0] - 12
-            comm = state.community_cards[:num_community_cards]
+            comm = jax.lax.dynamic_slice(
+                state.community_cards,
+                (0,),
+                (num_community_cards,)
+            )
             cards = jnp.concatenate([hole, comm], axis=0)
             strength = jax.pure_callback(
                 evaluate_hand_wrapper,
