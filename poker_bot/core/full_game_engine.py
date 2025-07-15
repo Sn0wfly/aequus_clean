@@ -131,7 +131,7 @@ def run_betting_round(init_state):
     return lax.while_loop(cond_fun, _betting_round_body, init_state)
 
 # ------------- Una calle (scan) -------------
-@jax.jit
+#@jax.jit
 def play_street(state, num_cards):
     def deal_cards(s):
         start = s.deck_ptr[0]
