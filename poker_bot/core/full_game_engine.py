@@ -7,7 +7,7 @@ from poker_bot.evaluator import HandEvaluator
 from jax.tree_util import register_pytree_node_class
 from functools import partial
 
-# --- Constantes y Wrapper ---
+# --- Constantes y Wrapper de Evaluador ---
 MAX_GAME_LENGTH = 60
 evaluator = HandEvaluator()
 
@@ -56,7 +56,7 @@ def create_initial_state(key: Array) -> GameState:
     
     stacks = jnp.full((6,), 1000.0)
     bets = jnp.zeros((6,)).at[0].set(5.0).at[1].set(10.0)
-    stacks = stacks.at[0].set(stacks[0] - 5.0).at[1].set(stacks[1] - 10.0)
+    stacks = stacks.at[0].add(-5.0).at[1].add(-10.0)
     
     return GameState(
         stacks=stacks, bets=bets, player_status=jnp.zeros((6,), dtype=jnp.int8),
@@ -89,90 +89,96 @@ def step(state: GameState, action: int) -> GameState:
 
     def _update_turn(s: GameState) -> GameState:
         start_idx = s.current_player_idx[0]
-        def body_fun(i, current_idx):
-            next_idx = (start_idx + 1 + i) % 6
-            return jax.lax.cond(s.player_status[next_idx] == 0, lambda: next_idx, lambda: current_idx)
-        next_player = jax.lax.fori_loop(0, 6, body_fun, start_idx)
+        next_player = start_idx
+        for i in range(1, 7):
+            p_idx = (start_idx + i) % 6
+            if s.player_status[p_idx] == 0:
+                next_player = p_idx
+                break
         return GameState(**{**s.__dict__, "current_player_idx": jnp.array([next_player], dtype=jnp.int8)})
-        
-    def do_fold(s): return GameState(**{**s.__dict__, "player_status": s.player_status.at[player_idx].set(1)})
-    def do_check(s): return s
+
+    def do_fold(s):
+        new_status = s.player_status.at[player_idx].set(1)
+        return GameState(**{**s.__dict__, "player_status": new_status})
+    def do_check(s):
+        return s
     def do_call(s):
         amount = jnp.max(s.bets) - s.bets[player_idx]
-        return GameState(**{**s.__dict__, "stacks": s.stacks.at[player_idx].add(-amount), "bets": s.bets.at[player_idx].add(amount), "pot_size": s.pot_size + amount})
+        new_stacks = s.stacks.at[player_idx].add(-amount)
+        new_bets = s.bets.at[player_idx].add(amount)
+        new_pot = s.pot_size + amount
+        return GameState(**{**s.__dict__, "stacks": new_stacks, "bets": new_bets, "pot_size": new_pot})
     def do_bet_raise(s):
         bet_size = 20.0
-        return GameState(**{**s.__dict__, "stacks": s.stacks.at[player_idx].add(-bet_size), "bets": s.bets.at[player_idx].add(bet_size), "pot_size": s.pot_size + bet_size})
+        new_stacks = s.stacks.at[player_idx].add(-bet_size)
+        new_bets = s.bets.at[player_idx].add(bet_size)
+        new_pot = s.pot_size + bet_size
+        return GameState(**{**s.__dict__, "stacks": new_stacks, "bets": new_bets, "pot_size": new_pot})
         
-    state_after_action = jax.lax.switch(jnp.clip(action, 0, 3), [do_fold, do_check, do_call, do_bet_raise], state)
-    is_aggressive = (action >= 3)
-    num_acted = jax.lax.cond(is_aggressive, lambda: 1, lambda: state.num_players_acted_this_round[0] + 1)
-    state_with_counter = GameState(**{**state_after_action.__dict__, "num_players_acted_this_round": jnp.array([num_acted])})
-    
-    return _update_turn(state_with_counter)
+    state_after_action = jax.lax.switch(
+        jnp.clip(action, 0, 3), [do_fold, do_check, do_call, do_bet_raise], state
+    )
+    return _update_turn(state_after_action)
 
 @jax.jit
-def _deal_street(state, street_idx):
-    def deal_flop(s):
-        cards = jax.lax.dynamic_slice(s.deck, (s.deck_pointer[0],), (3,))
-        new_comm = s.community_cards.at[:3].set(cards)
-        return GameState(**{**s.__dict__, "community_cards": new_comm, "deck_pointer": s.deck_pointer + 3})
-    def deal_turn_river(s):
-        card = jax.lax.dynamic_slice(s.deck, (s.deck_pointer[0],), (1,))
-        num_dealt = jnp.sum(s.community_cards != -1)
-        new_comm = jax.lax.dynamic_update_slice(s.community_cards, card, (num_dealt,))
-        return GameState(**{**s.__dict__, "community_cards": new_comm, "deck_pointer": s.deck_pointer + 1})
-        
-    return jax.lax.switch(street_idx, [lambda s: s, deal_flop, deal_turn_river, deal_turn_river], state)
+def _deal_community_cards(state: GameState, num_to_deal: int) -> GameState:
+    start = state.deck_pointer[0]
+    cards = jax.lax.dynamic_slice_in_dim(state.deck, start, num_to_deal)
+    num_dealt = jnp.sum(state.community_cards != -1)
+    new_community = jax.lax.dynamic_update_slice(state.community_cards, cards, (num_dealt,))
+    return GameState(**{**state.__dict__, "community_cards": new_community, "deck_pointer": state.deck_pointer + num_to_deal})
 
-# --- Orquestación y Vectorización (TODO COMPILADO) ---
-@partial(jax.jit, static_argnames=("batch_size", "max_steps"))
-def batch_play_and_resolve(key: Array, policy_logits: Array, batch_size: int, max_steps: int = 60):
-    
-    keys = jax.random.split(key, batch_size)
-    initial_states = jax.vmap(create_initial_state)(keys)
+# --- Orquestación Híbrida ---
+def run_betting_round(state: GameState, policy_logits: Array, key: Array):
+    history_in_round = []
+    for _ in range(30):
+        num_active = jnp.sum(state.player_status == 0)
+        if num_active <= 1: break
+        
+        player_idx = state.current_player_idx[0]
+        all_acted = (state.num_players_acted_this_round[0] >= num_active)
+        bets_settled = (state.bets[player_idx] == jnp.max(state.bets))
+        
+        # Corregir la condición de parada para la primera acción
+        if all_acted and bets_settled and state.num_players_acted_this_round[0] > 0:
+             break
 
-    def game_loop_body(i, carry):
-        state, continue_mask, histories, key = carry
-        
-        is_deal_time = (i == 0) | (i == 15) | (i == 20) | (i == 25)
-        current_street = state.street[:, 0]
-        
-        # Lógica de reparto de cartas
-        # ...
-        
-        # Lógica de acción
-        player_idx = state.current_player_idx[:, 0]
         logits = policy_logits[player_idx]
-        legal = jax.vmap(get_legal_actions)(state)
-        masked = jnp.where(legal, logits, -1e9)
-        keys = jax.random.split(key, batch_size + 1)
-        action_keys, next_key = keys[:-1], keys[-1]
-        actions = jax.vmap(jax.random.categorical)(action_keys, masked)
+        legal_mask = get_legal_actions(state)
+        masked_logits = jnp.where(legal_mask, logits, -1e9)
+        key, subkey = jax.random.split(key)
+        action = jax.random.categorical(subkey, masked_logits)
         
-        next_state = jax.vmap(step)(state, actions)
+        history_in_round.append(int(action))
+        state_after_action = step(state, action)
         
-        final_state = jax.tree_util.tree_map(
-            lambda old, new: jnp.where(continue_mask[:, None], new, old) if old.ndim > 1 else jnp.where(continue_mask, new, old),
-            state, next_state
-        )
-
-        histories = histories.at[jnp.arange(batch_size), i].set(jnp.where(continue_mask, actions, -1))
+        is_aggressive = (action >= 3)
+        num_acted = 1 if is_aggressive else state.num_players_acted_this_round[0] + 1
+        state = GameState(**{**state_after_action.__dict__, "num_players_acted_this_round": jnp.array([num_acted])})
         
-        num_active = jax.vmap(lambda s: jnp.sum(s.player_status == 0))(final_state)
-        game_is_over = num_active <= 1
-        new_continue_mask = continue_mask & ~game_is_over
+    final_state = GameState(**{**state.__dict__, "num_players_acted_this_round": jnp.array([0])})
+    return final_state, history_in_round
 
-        return final_state, new_continue_mask, histories, next_key
-
-    histories = jnp.full((batch_size, max_steps), -1, dtype=jnp.int32)
-    continue_mask = jnp.ones(batch_size, dtype=jnp.bool_)
+def play_game(initial_state: GameState, policy_logits: Array, key: Array):
+    state = initial_state
+    full_history = []
     
-    final_states, _, final_histories, _ = jax.lax.fori_loop(0, max_steps, game_loop_body, (initial_states, continue_mask, histories, key))
-    
-    payoffs = jax.vmap(resolve_showdown)(final_states)
-    
-    return final_states, payoffs, final_histories, initial_states
+    for street_idx, num_cards in enumerate([0, 3, 1, 1]):
+        if street_idx > 0:
+            if jnp.sum(state.player_status != 1) > 1:
+                state = _deal_community_cards(state, num_cards)
+            else:
+                break
+        
+        state = GameState(**{**state.__dict__, "street": jnp.array([street_idx])})
+        key, subkey = jax.random.split(key)
+        state, history = run_betting_round(state, policy_logits, subkey)
+        full_history.extend(history)
+            
+    padded_history = np.full((MAX_GAME_LENGTH,), -1, dtype=np.int32)
+    if full_history:
+        padded_history[:len(full_history)] = full_history
+    return state, jnp.array(padded_history)
 
 @jax.jit
 def resolve_showdown(state: GameState) -> Array:
@@ -199,4 +205,22 @@ def resolve_showdown(state: GameState) -> Array:
                        lambda: jax.lax.cond(can_showdown, showdown_case, single_winner_case))
 
 def batch_play_game(batch_size: int, policy_logits: Array, key: Array):
-    return batch_play_and_resolve(key, policy_logits, batch_size, MAX_GAME_LENGTH)
+    keys = jax.random.split(key, batch_size)
+    
+    vmap_initial_state = jax.vmap(create_initial_state)
+    initial_states = vmap_initial_state(keys)
+    
+    final_states, histories = [], []
+    for i in range(batch_size):
+        initial_state_i = jax.tree_util.tree_map(lambda x: x[i], initial_states)
+        final_state, history = play_game(initial_state_i, policy_logits, keys[i])
+        final_states.append(final_state)
+        histories.append(history)
+
+    stacked_states = jax.tree_util.tree_map(lambda *x: jnp.stack(x), *final_states)
+    stacked_histories = jnp.stack(histories)
+    
+    vmap_resolve_showdown = jax.vmap(resolve_showdown)
+    payoffs = vmap_resolve_showdown(stacked_states)
+    
+    return stacked_states, payoffs, stacked_histories, initial_states
