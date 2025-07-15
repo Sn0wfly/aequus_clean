@@ -6,6 +6,7 @@ from typing import Optional
 import numpy as np
 from jax import ShapeDtypeStruct
 from poker_bot.evaluator import HandEvaluator
+from jax.tree_util import register_pytree_node_class
 
 evaluator = HandEvaluator()
 
@@ -13,6 +14,7 @@ def evaluate_hand_wrapper(cards_np: np.ndarray) -> int:
     cards_list = cards_np.tolist()
     return evaluator.evaluate_single(cards_list)
 
+@register_pytree_node_class
 @dataclass
 class GameState:
     stacks: Array  # (6,)
@@ -25,6 +27,17 @@ class GameState:
     pot_size: Array  # (1,)
     deck: Array  # (52,)
     deck_pointer: Array  # (1,)
+
+    def tree_flatten(self):
+        children = (self.stacks, self.bets, self.player_status, self.hole_cards,
+                    self.community_cards, self.current_player_idx, self.street,
+                    self.pot_size, self.deck, self.deck_pointer)
+        aux_data = None
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
 
 @jax.jit
 def get_legal_actions(state: GameState, num_actions: int = 14) -> jnp.ndarray:
