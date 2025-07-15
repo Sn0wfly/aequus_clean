@@ -113,7 +113,8 @@ def _update_turn(state: GameState) -> GameState:
         street=state.street,
         pot_size=state.pot_size,
         deck=state.deck,
-        deck_pointer=state.deck_pointer
+        deck_pointer=state.deck_pointer,
+        num_players_acted_this_round=state.num_players_acted_this_round
     )
 
 # @jax.jit
@@ -136,7 +137,8 @@ def step(state: GameState, action: int) -> GameState:
             street=state.street,
             pot_size=state.pot_size,
             deck=state.deck,
-            deck_pointer=state.deck_pointer
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
         )
         return _update_turn(new_state)
 
@@ -152,7 +154,8 @@ def step(state: GameState, action: int) -> GameState:
             street=state.street,
             pot_size=state.pot_size,
             deck=state.deck,
-            deck_pointer=state.deck_pointer
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
         )
         return _update_turn(new_state)
 
@@ -171,7 +174,8 @@ def step(state: GameState, action: int) -> GameState:
             street=state.street,
             pot_size=new_pot,
             deck=state.deck,
-            deck_pointer=state.deck_pointer
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
         )
         return _update_turn(new_state)
 
@@ -190,7 +194,8 @@ def step(state: GameState, action: int) -> GameState:
             street=state.street,
             pot_size=new_pot,
             deck=state.deck,
-            deck_pointer=state.deck_pointer
+            deck_pointer=state.deck_pointer,
+            num_players_acted_this_round=state.num_players_acted_this_round
         )
         return _update_turn(new_state)
 
@@ -327,7 +332,8 @@ def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState
         street=state.street,
         pot_size=state.pot_size,
         deck=state.deck,
-        deck_pointer=new_deck_pointer
+        deck_pointer=new_deck_pointer,
+        num_players_acted_this_round=state.num_players_acted_this_round
     )
 
 # @jax.jit
