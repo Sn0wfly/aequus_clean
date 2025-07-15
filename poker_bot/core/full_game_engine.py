@@ -208,26 +208,25 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
         key = jax.random.PRNGKey(0)
     max_steps = 30
 
-    def _betting_step(state_key, _):
-        state, key = state_key
+    def _betting_step(carry, _):
+        state, key = carry
         player_idx = state.current_player_idx[0]
         bets_equal = (state.bets[player_idx] == jnp.max(state.bets))
         num_active = jnp.sum(state.player_status == 0)
         all_acted = (state.num_players_acted_this_round[0] >= num_active)
         is_round_over = bets_equal & all_acted
 
-        def do_nothing(state_key):
-            return state_key
+        def do_nothing(carry):
+            return carry  # Devuelve la tupla original sin cambios
 
-        def do_action_step(state_key):
-            state, key = state_key
+        def do_action_step(carry):
+            state, key = carry
             logits = policy_logits[player_idx]
             legal_mask = get_legal_actions(state)
             masked_logits = jnp.where(legal_mask, logits, -1e9)
             key, subkey = jax.random.split(key)
             action = jax.random.categorical(subkey, masked_logits)
             new_state = step(state, action)
-            # Determina el tipo de acción para actualizar el contador
             is_bet_or_raise = (action >= 3)
             new_num_acted = jnp.where(is_bet_or_raise, jnp.array([1]), state.num_players_acted_this_round + 1)
             new_state = GameState(
@@ -243,9 +242,9 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
                 deck_pointer=new_state.deck_pointer,
                 num_players_acted_this_round=new_num_acted
             )
-            return (new_state, key)
+            return (new_state, key)  # Devuelve la nueva tupla
 
-        return jax.lax.cond(is_round_over, do_nothing, do_action_step, state_key)
+        return jax.lax.cond(is_round_over, do_nothing, do_action_step, carry)
 
     # Ejecuta el scan con un número fijo de pasos
     (final_state, _), _ = jax.lax.scan(_betting_step, (initial_state, key), xs=None, length=max_steps)
