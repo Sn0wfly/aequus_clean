@@ -1,0 +1,157 @@
+# 🎯 Elite Poker AI Configuration
+# Professional-grade NLHE configuration based on OpenSpiel patterns
+
+# Game Engine Configuration
+game_engine:
+  num_players: 6
+  small_blind: 1.0
+  big_blind: 2.0
+  starting_stack: 100.0
+  max_bet_fractions: [0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+  max_depth: 4
+
+# Betting Tree Configuration
+betting_tree:
+  action_space: 11  # fold, check, call, bet, raise, all-in variants
+  max_bet_sizes: 6  # Number of discrete bet sizes
+  allow_overbet: true
+  side_pots: true
+  all_in_scenarios: true
+
+# State Representation
+state_representation:
+  state_size: 81  # Fixed-size state vector
+  include_action_history: true
+  include_side_pots: true
+  normalize_stacks: true
+  max_history_actions: 10
+
+# Training Configuration
+training:
+  num_iterations: 10000000
+  batch_size: 32768
+  learning_rate: 0.05
+  temperature: 1.0
+  discount_factor: 0.999
+  
+  # Elite targets
+  target_info_sets: 500000
+  target_buckets: 500000
+  convergence_threshold: 0.001
+  
+  # Memory management
+  max_memory_gb: 32
+  growth_factor: 1.5
+  chunk_size: 20000
+
+# Bucketing Configuration
+bucketing:
+  type: "high_resolution"
+  num_buckets: 500000
+  hand_strength_levels: 1000
+  position_buckets: 6
+  stack_depth_levels: 20
+  pot_ratio_levels: 15
+  betting_history_levels: 10
+  
+  # Sparsity management
+  sparse_activation: true
+  dynamic_bucket_creation: true
+  bucket_merging: true
+  min_bucket_frequency: 100
+
+# GPU Configuration
+gpu:
+  device: "cuda"
+  dtype: "bfloat16"
+  accumulation_dtype: "float32"
+  memory_fraction: 0.9
+  allow_growth: true
+  
+  # CUDA kernels
+  use_custom_kernels: true
+  kernel_optimization: "max_performance"
+  shared_memory_size: 49152  # 48KB
+
+# CFR Configuration
+cfr:
+  algorithm: "mccfr"
+  sampling: "external"
+  regret_matching: "plus"
+  linear_discounting: true
+  adaptive_exploration: true
+  
+  # Advanced CFR
+  use_gpu_rollouts: true
+  num_rollouts: 500
+  parallel_rollouts: true
+  batch_rollouts: true
+
+# Validation Configuration
+validation:
+  validate_states: true
+  validate_transitions: true
+  check_equilibrium: true
+  benchmark_performance: true
+  
+  # Quality metrics
+  exploitability_threshold: 0.1
+  convergence_check_interval: 1000
+  save_interval: 10000
+
+# Performance Monitoring
+monitoring:
+  log_level: "INFO"
+  track_memory: true
+  track_performance: true
+  profile_kernels: false
+  
+  # Metrics
+  log_games_per_second: true
+  log_unique_info_sets: true
+  log_memory_usage: true
+  log_gpu_utilization: true
+
+# File Paths
+paths:
+  model_save_path: "models/elite_poker_ai.pkl"
+  checkpoint_path: "checkpoints/elite_checkpoint_"
+  log_path: "logs/elite_training.log"
+  benchmark_path: "benchmarks/elite_results.json"
+  
+  # Data paths
+  training_data: "data/training_games/"
+  validation_data: "data/validation_games/"
+  test_data: "data/test_games/"
+
+# Hardware Requirements
+hardware:
+  min_gpu_memory: 24  # GB
+  recommended_gpu: "H100"
+  min_cpu_cores: 8
+  min_ram: 32  # GB
+  
+  # Cloud configuration
+  cloud_provider: "vast.ai"
+  instance_type: "H100_80GB"
+  spot_instance: true
+  max_cost_per_hour: 3.0  # USD
+
+# Expert Settings
+expert:
+  # OpenSpiel integration
+  use_openspiel_patterns: true
+  openspiel_game: "universal_poker"
+  openspiel_config: "nlh_6max"
+  
+  # Advanced features
+  use_icm: true
+  use_blockers: true
+  use_range_weights: true
+  use_history_aware: true
+  
+  # Optimization
+  compile_with_jax: true
+  use_xla: true
+  use_pmap: false  # Single GPU for now
+  mixed_precision: true
