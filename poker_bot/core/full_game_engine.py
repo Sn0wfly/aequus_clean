@@ -88,47 +88,39 @@ def step(state: GameState, action: int) -> GameState:
 
     def _update_turn(s: GameState) -> GameState:
         start_idx = s.current_player_idx[0]
-        next_player = start_idx
-        for i in range(1, 7):
-            p_idx = (start_idx + i) % 6
-            if s.player_status[p_idx] == 0:
-                next_player = p_idx
-                break
+        # Bucle fori_loop es seguro para JIT
+        def body_fun(i, current_idx):
+            next_idx = (start_idx + 1 + i) % 6
+            return jax.lax.cond(s.player_status[next_idx] == 0, lambda: next_idx, lambda: current_idx)
+        next_player = jax.lax.fori_loop(0, 6, body_fun, start_idx)
         return GameState(**{**s.__dict__, "current_player_idx": jnp.array([next_player], dtype=jnp.int8)})
 
     def do_fold(s):
-        new_status = s.player_status.at[player_idx].set(1)
-        return _update_turn(GameState(**{**s.__dict__, "player_status": new_status}))
+        return GameState(**{**s.__dict__, "player_status": s.player_status.at[player_idx].set(1)})
     def do_check(s):
-        return _update_turn(s)
+        return s
     def do_call(s):
         amount = jnp.max(s.bets) - s.bets[player_idx]
-        new_stacks = s.stacks.at[player_idx].add(-amount)
-        new_bets = s.bets.at[player_idx].add(amount)
-        new_pot = s.pot_size + amount
-        return _update_turn(GameState(**{**s.__dict__, "stacks": new_stacks, "bets": new_bets, "pot_size": new_pot}))
+        return GameState(**{**s.__dict__, "stacks": s.stacks.at[player_idx].add(-amount), "bets": s.bets.at[player_idx].add(amount), "pot_size": s.pot_size + amount})
     def do_bet_raise(s):
         bet_size = 20.0
-        new_stacks = s.stacks.at[player_idx].add(-bet_size)
-        new_bets = s.bets.at[player_idx].add(bet_size)
-        new_pot = s.pot_size + bet_size
-        return _update_turn(GameState(**{**s.__dict__, "stacks": new_stacks, "bets": new_bets, "pot_size": new_pot}))
+        return GameState(**{**s.__dict__, "stacks": s.stacks.at[player_idx].add(-bet_size), "bets": s.bets.at[player_idx].add(bet_size), "pot_size": s.pot_size + bet_size})
         
-    return jax.lax.switch(
-        jnp.clip(action, 0, 3),
-        [do_fold, do_check, do_call, do_bet_raise],
-        state
+    state_after_action = jax.lax.switch(
+        jnp.clip(action, 0, 3), [do_fold, do_check, do_call, do_bet_raise], state
     )
+    return _update_turn(state_after_action)
 
 @jax.jit
 def _deal_community_cards(state: GameState, num_to_deal: int) -> GameState:
     start = state.deck_pointer[0]
+    # Usamos dynamic_slice_in_dim que no requiere static_argnums en este contexto
     cards = jax.lax.dynamic_slice_in_dim(state.deck, start, num_to_deal)
     num_dealt = jnp.sum(state.community_cards != -1)
     new_community = jax.lax.dynamic_update_slice(state.community_cards, cards, (num_dealt,))
     return GameState(**{**state.__dict__, "community_cards": new_community, "deck_pointer": state.deck_pointer + num_to_deal})
 
-# --- Orquestación Híbrida ---
+# --- Orquestación Híbrida (Bucles de Python, sin JIT) ---
 def run_betting_round(state: GameState, policy_logits: Array, key: Array):
     history_in_round = []
     for _ in range(30):
@@ -139,39 +131,41 @@ def run_betting_round(state: GameState, policy_logits: Array, key: Array):
         all_acted = (state.num_players_acted_this_round[0] >= num_active)
         bets_settled = (state.bets[player_idx] == jnp.max(state.bets))
         
+        # Corregir la condición de parada para la primera acción
         if all_acted and bets_settled: break
 
         logits = policy_logits[player_idx]
-        legal_mask = get_legal_actions(state)
+        legal_mask = get_legal_actions(state) # Llama a la función JIT
         masked_logits = jnp.where(legal_mask, logits, -1e9)
         key, subkey = jax.random.split(key)
         action = jax.random.categorical(subkey, masked_logits)
         
-        history_in_round.append(action)
-        state_after_action = step(state, action)
+        history_in_round.append(int(action))
+        state_after_action = step(state, action) # Llama a la función JIT
         
         is_aggressive = (action >= 3)
         num_acted = 1 if is_aggressive else state.num_players_acted_this_round[0] + 1
         state = GameState(**{**state_after_action.__dict__, "num_players_acted_this_round": jnp.array([num_acted])})
         
-    return GameState(**{**state.__dict__, "num_players_acted_this_round": jnp.array([0])}), history_in_round
+    final_state = GameState(**{**state.__dict__, "num_players_acted_this_round": jnp.array([0])})
+    return final_state, history_in_round
 
 def play_game(initial_state: GameState, policy_logits: Array, key: Array):
     state = initial_state
     full_history = []
     
-    # Preflop
-    key, subkey = jax.random.split(key)
-    state, history = run_betting_round(state, policy_logits, subkey)
-    full_history.extend(history)
-    
-    # Flop, Turn, River
-    for street_idx, num_cards in enumerate([3, 1, 1], 1):
-        if jnp.sum(state.player_status != 1) > 1:
-            state = _deal_community_cards(state, num_cards)
-            key, subkey = jax.random.split(key)
-            state, history = run_betting_round(state, policy_logits, subkey)
-            full_history.extend(history)
+    for street_idx, num_cards in enumerate([0, 3, 1, 1]):
+        # Solo repartir post-flop
+        if street_idx > 0:
+            if jnp.sum(state.player_status != 1) > 1:
+                state = _deal_community_cards(state, num_cards)
+            else:
+                break # Termina el juego si solo queda uno
+        
+        state = GameState(**{**state.__dict__, "street": jnp.array([street_idx])})
+        key, subkey = jax.random.split(key)
+        state, history = run_betting_round(state, policy_logits, subkey)
+        full_history.extend(history)
             
     padded_history = np.full((MAX_GAME_LENGTH,), -1, dtype=np.int32)
     padded_history[:len(full_history)] = full_history

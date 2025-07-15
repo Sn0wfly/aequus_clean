@@ -30,10 +30,7 @@ class PokerTrainer:
         
         for it in range(num_iterations):
             key = jax.random.PRNGKey(self.iteration)
-            
-            # Llamamos a la función directamente, sin JIT en el train_step
             self.train_step(key)
-            
             self.iteration += 1
             if (self.iteration % save_interval == 0):
                 self.save_model(f"{save_path}_iter_{self.iteration}.pkl")
@@ -55,6 +52,7 @@ class PokerTrainer:
                 action = int(history[t])
                 if action == -1: break
                 states_trajectory.append(current_state)
+                # La función step SÍ está compilada, por lo que esta reconstrucción es rápida
                 current_state = fge.step(current_state, action)
 
             if not states_trajectory: continue
@@ -86,9 +84,9 @@ class PokerTrainer:
 
     def train_step(self, key: Array):
         # La política se basa en la estrategia actual
-        policy_logits = jnp.log(self.strategies + 1e-9)
+        # Usamos los regrets como logits, es una técnica válida en CFR.
+        policy_logits = self.regrets
         
-        # El motor de juego se ejecuta en modo híbrido (bucles de Python)
         final_states, payoffs, histories, initial_states = fge.batch_play_game(
             batch_size=self.config.batch_size, policy_logits=policy_logits, key=key
         )
@@ -98,11 +96,13 @@ class PokerTrainer:
             np.array(payoffs), np.array(histories), initial_states
         )
         
-        # La actualización de regrets y estrategias se hace en JAX para mayor velocidad
+        # La actualización de JAX es rápida y se hace en batch
         if indices.shape[0] > 0:
             self.regrets = self.regrets.at[indices].add(jnp.array(regrets_from_game))
-            current_regrets = self.regrets[indices]
-            positive_regrets = jnp.maximum(current_regrets, 0)
+            
+            # Actualizamos solo las estrategias que han cambiado
+            updated_regrets = self.regrets[indices]
+            positive_regrets = jnp.maximum(updated_regrets, 0)
             sum_pos_regrets = jnp.sum(positive_regrets, axis=1, keepdims=True)
             sum_pos_regrets = jnp.where(sum_pos_regrets > 0, sum_pos_regrets, 1)
             new_strategy_subset = positive_regrets / sum_pos_regrets
