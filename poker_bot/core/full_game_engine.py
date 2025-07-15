@@ -200,52 +200,55 @@ def step(state: GameState, action: int) -> GameState:
 
 # @jax.jit
 def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: Array = None) -> GameState:
-    print("--- Iniciando run_betting_round ---")
+    """
+    Ejecuta una ronda de apuestas usando jax.lax.scan con un número fijo de pasos.
+    La lógica de parada está dentro del cuerpo del scan.
+    """
     if key is None:
         key = jax.random.PRNGKey(0)
+    max_steps = 30
 
-    def cond_fun(loop_state):
-        state, _ = loop_state
+    def _betting_step(state_key, _):
+        state, key = state_key
         player_idx = state.current_player_idx[0]
         bets_equal = (state.bets[player_idx] == jnp.max(state.bets))
         num_active = jnp.sum(state.player_status == 0)
         all_acted = (state.num_players_acted_this_round[0] >= num_active)
-        return ~(bets_equal & all_acted)
+        is_round_over = bets_equal & all_acted
 
-    def body_fun(loop_state):
-        state, key = loop_state
-        player_idx = state.current_player_idx[0]
-        logits = policy_logits[player_idx]
-        legal_mask = get_legal_actions(state)
-        masked_logits = jnp.where(legal_mask, logits, -1e9)
-        key, subkey = jax.random.split(key)
-        action = jax.random.categorical(subkey, masked_logits)
-        new_state = step(state, action)
+        def do_nothing(state_key):
+            return state_key
 
-        # Determina el tipo de acción para actualizar el contador
-        # 1 = CHECK, 2 = CALL, 3+ = BET/RAISE
-        is_check = (action == 1)
-        is_call = (action == 2)
-        is_bet_or_raise = (action >= 3)
-        # Si BET/RAISE, resetea a 1; si CHECK/CALL, suma 1
-        new_num_acted = jnp.where(is_bet_or_raise, jnp.array([1]), state.num_players_acted_this_round + 1)
-        new_state = GameState(
-            stacks=new_state.stacks,
-            bets=new_state.bets,
-            player_status=new_state.player_status,
-            hole_cards=new_state.hole_cards,
-            community_cards=new_state.community_cards,
-            current_player_idx=new_state.current_player_idx,
-            street=new_state.street,
-            pot_size=new_state.pot_size,
-            deck=new_state.deck,
-            deck_pointer=new_state.deck_pointer,
-            num_players_acted_this_round=new_num_acted
-        )
-        return (new_state, key)
+        def do_action_step(state_key):
+            state, key = state_key
+            logits = policy_logits[player_idx]
+            legal_mask = get_legal_actions(state)
+            masked_logits = jnp.where(legal_mask, logits, -1e9)
+            key, subkey = jax.random.split(key)
+            action = jax.random.categorical(subkey, masked_logits)
+            new_state = step(state, action)
+            # Determina el tipo de acción para actualizar el contador
+            is_bet_or_raise = (action >= 3)
+            new_num_acted = jnp.where(is_bet_or_raise, jnp.array([1]), state.num_players_acted_this_round + 1)
+            new_state = GameState(
+                stacks=new_state.stacks,
+                bets=new_state.bets,
+                player_status=new_state.player_status,
+                hole_cards=new_state.hole_cards,
+                community_cards=new_state.community_cards,
+                current_player_idx=new_state.current_player_idx,
+                street=new_state.street,
+                pot_size=new_state.pot_size,
+                deck=new_state.deck,
+                deck_pointer=new_state.deck_pointer,
+                num_players_acted_this_round=new_num_acted
+            )
+            return (new_state, key)
 
-    # Ejecuta el while_loop
-    final_state, _ = jax.lax.while_loop(cond_fun, body_fun, (initial_state, key))
+        return jax.lax.cond(is_round_over, do_nothing, do_action_step, state_key)
+
+    # Ejecuta el scan con un número fijo de pasos
+    (final_state, _), _ = jax.lax.scan(_betting_step, (initial_state, key), xs=None, length=max_steps)
 
     # Resetea el contador para la siguiente ronda
     final_state = GameState(
@@ -316,34 +319,10 @@ def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) 
                 state
             )
         state = deal_cards(state)
-        # Ejecuta la ronda de apuestas y guarda el historial de acciones
+        # Ejecuta la ronda de apuestas usando el nuevo run_betting_round
         key, subkey = jax.random.split(key)
-        def betting_body(betting_carry):
-            state, key, history, action_counter, done = betting_carry
-            player_idx = state.current_player_idx[0]
-            logits = policy_logits[player_idx]
-            legal_mask = get_legal_actions(state)
-            masked_logits = jnp.where(legal_mask, logits, -1e9)
-            key, subkey = jax.random.split(key)
-            action = jax.random.categorical(subkey, masked_logits)
-            new_state = step(state, action)
-            # Guarda la acción en el historial
-            history = history.at[action_counter].set(action)
-            action_counter = action_counter + 1
-            # Condición de parada: la ronda termina cuando todos han actuado y las apuestas están igualadas
-            player_idx = new_state.current_player_idx[0]
-            bets_equal = (new_state.bets[player_idx] == jnp.max(new_state.bets))
-            num_active = jnp.sum(new_state.player_status == 0)
-            all_acted = (new_state.num_players_acted_this_round[0] >= num_active)
-            done = bets_equal & all_acted
-            return (new_state, key, history, action_counter, done)
-        # Inicializa el bucle de apuestas
-        done = False
-        betting_carry = (state, subkey, history, action_counter, done)
-        def cond_fun(betting_carry):
-            return ~betting_carry[4]
-        betting_carry = jax.lax.while_loop(cond_fun, betting_body, betting_carry)
-        state, key, history, action_counter, _ = betting_carry
+        state = run_betting_round(state, policy_logits, subkey)
+        # (Opcional: aquí podrías guardar el historial de acciones si lo deseas)
         return (state, key, history, action_counter)
 
     # Inicializa el historial y el contador de acciones
