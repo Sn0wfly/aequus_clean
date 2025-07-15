@@ -116,6 +116,9 @@ def apply_action(state, action):
         acted_this_round=state2.acted_this_round + 1
     )
 
+def step(state, action):
+    return apply_action(state, action)
+
 # ---------- Betting round ----------
 def _betting_body(state):
     legal = get_legal_actions(state)
