@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from . import full_game_engine as fge
 from .full_game_engine import GameState
 from jax import Array
-from functools import partial
 
 logger = logging.getLogger(__name__)
 
@@ -24,21 +23,16 @@ class PokerTrainer:
         self.iteration = 0
         self.regrets = jnp.zeros((config.max_info_sets, config.num_actions))
         self.strategies = jnp.ones((config.max_info_sets, config.num_actions)) / config.num_actions
-        logger.info("PokerTrainer inicializado con el nuevo motor CFR y aprendizaje real.")
+        logger.info("PokerTrainer inicializado con el nuevo motor CFR (modo híbrido).")
 
     def train(self, num_iterations: int, save_path: str, save_interval: int):
         logger.info(f"🚀 Iniciando entrenamiento por {num_iterations} iteraciones...")
         
-        # Envolvemos el train_step para que JIT pueda manejar la config
-        jit_train_step = partial(PokerTrainer.train_step, config=self.config)
-        
-        # Compilamos la función una sola vez
-        compiled_step = jax.jit(jit_train_step)
-
         for it in range(num_iterations):
             key = jax.random.PRNGKey(self.iteration)
             
-            self.regrets, self.strategies = compiled_step(key, self.regrets, self.strategies)
+            # Llamamos a la función directamente, sin JIT en el train_step
+            self.train_step(key)
             
             self.iteration += 1
             if (self.iteration % save_interval == 0):
@@ -47,17 +41,13 @@ class PokerTrainer:
         
         logger.info("🎉 Entrenamiento finalizado.")
 
-    @staticmethod
-    def _cfr_backtracking(payoffs: Array, histories: Array, initial_states: GameState, config: TrainerConfig):
-        # Esta función se ejecuta en Python puro y por tanto no se compila.
-        # Esto es más lento pero garantiza que funcione y sea depurable.
+    def _cfr_backtracking(self, payoffs: np.ndarray, histories: np.ndarray, initial_states):
         all_indices, all_regrets = [], []
 
-        for i in range(config.batch_size):
+        for i in range(self.config.batch_size):
             history = histories[i]
             payoff_vector = payoffs[i]
             
-            # Reconstruir trayectoria
             states_trajectory = []
             current_state = jax.tree_util.tree_map(lambda x: x[i], initial_states)
             
@@ -69,18 +59,17 @@ class PokerTrainer:
 
             if not states_trajectory: continue
             
-            # Backtracking
             for t in reversed(range(len(states_trajectory))):
                 state_t = states_trajectory[t]
                 action_t = int(history[t])
                 player_t = int(state_t.current_player_idx[0])
                 state_value = payoff_vector[player_t]
-                info_set_index = player_t # Placeholder
+                info_set_index = player_t
                 
-                action_regrets = np.zeros(config.num_actions, dtype=np.float32)
+                action_regrets = np.zeros(self.config.num_actions, dtype=np.float32)
                 legal_actions_mask = fge.get_legal_actions(state_t)
 
-                for a in range(config.num_actions):
+                for a in range(self.config.num_actions):
                     if legal_actions_mask[a]:
                         cf_value = state_value if a == action_t else 0.0
                         action_regrets[a] = cf_value - state_value
@@ -91,36 +80,33 @@ class PokerTrainer:
                 all_regrets.append(action_regrets)
 
         if not all_indices:
-            return jnp.array([], dtype=jnp.int32), jnp.array([], dtype=jnp.float32).reshape(0, config.num_actions)
+            return np.array([], dtype=np.int32), np.array([], dtype=np.float32).reshape(0, self.config.num_actions)
 
-        return jnp.array(all_indices, dtype=jnp.int32), jnp.stack(all_regrets)
+        return np.array(all_indices, dtype=np.int32), np.stack(all_regrets)
 
-    @staticmethod
-    def train_step(key: Array, regrets_table: Array, strategies_table: Array, config: TrainerConfig):
-        policy_logits = jnp.log(strategies_table + 1e-9)
+    def train_step(self, key: Array):
+        # La política se basa en la estrategia actual
+        policy_logits = jnp.log(self.strategies + 1e-9)
         
-        # La simulación SÍ se compila.
+        # El motor de juego se ejecuta en modo híbrido (bucles de Python)
         final_states, payoffs, histories, initial_states = fge.batch_play_game(
-            batch_size=config.batch_size, policy_logits=policy_logits, key=key
+            batch_size=self.config.batch_size, policy_logits=policy_logits, key=key
         )
 
-        # El backtracking se ejecuta fuera de JIT usando un callback
-        indices, regrets_from_game = jax.pure_callback(
-            lambda p, h, i: PokerTrainer._cfr_backtracking(None, p, h, i, config),
-            (ShapeDtypeStruct((None,), np.int32), ShapeDtypeStruct((None, config.num_actions), np.float32)),
-            payoffs, histories, initial_states
+        # El backtracking se ejecuta en Python puro
+        indices, regrets_from_game = self._cfr_backtracking(
+            np.array(payoffs), np.array(histories), initial_states
         )
         
-        # La actualización SÍ se compila
-        new_regrets_table = regrets_table.at[indices].add(regrets_from_game)
-        current_regrets = new_regrets_table[indices]
-        positive_regrets = jnp.maximum(current_regrets, 0)
-        sum_pos_regrets = jnp.sum(positive_regrets, axis=1, keepdims=True)
-        sum_pos_regrets = jnp.where(sum_pos_regrets > 0, sum_pos_regrets, 1)
-        new_strategy_subset = positive_regrets / sum_pos_regrets
-        new_strategies_table = strategies_table.at[indices].set(new_strategy_subset)
-        
-        return new_regrets_table, new_strategies_table
+        # La actualización de regrets y estrategias se hace en JAX para mayor velocidad
+        if indices.shape[0] > 0:
+            self.regrets = self.regrets.at[indices].add(jnp.array(regrets_from_game))
+            current_regrets = self.regrets[indices]
+            positive_regrets = jnp.maximum(current_regrets, 0)
+            sum_pos_regrets = jnp.sum(positive_regrets, axis=1, keepdims=True)
+            sum_pos_regrets = jnp.where(sum_pos_regrets > 0, sum_pos_regrets, 1)
+            new_strategy_subset = positive_regrets / sum_pos_regrets
+            self.strategies = self.strategies.at[indices].set(new_strategy_subset)
 
     def save_model(self, path: str):
         model_data = {'regrets': np.array(self.regrets), 'strategies': np.array(self.strategies), 'iteration': self.iteration, 'config': self.config}
