@@ -40,7 +40,7 @@ class GameState:
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
 
-@jax.jit
+# @jax.jit
 def get_legal_actions(state: GameState, num_actions: int = 14) -> jnp.ndarray:
     """
     Devuelve un array booleano de tamaño num_actions donde True indica que la acción es legal.
@@ -81,7 +81,7 @@ def get_legal_actions(state: GameState, num_actions: int = 14) -> jnp.ndarray:
 
     return legal_actions_mask
 
-@jax.jit
+# @jax.jit
 def _update_turn(state: GameState) -> GameState:
     """
     Avanza el turno al siguiente jugador activo (player_status == 0).
@@ -113,7 +113,7 @@ def _update_turn(state: GameState) -> GameState:
         deck_pointer=state.deck_pointer
     )
 
-@jax.jit
+# @jax.jit
 def step(state: GameState, action: int) -> GameState:
     """
     Aplica la acción al estado y devuelve un nuevo GameState actualizado.
@@ -205,7 +205,7 @@ def step(state: GameState, action: int) -> GameState:
     # action: 0=FOLD, 1=CHECK, 2=CALL, 3-13=BET/RAISE
     return action_fn(jnp.clip(action, 0, 13))
 
-@jax.jit
+# @jax.jit
 def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key: Array = None) -> GameState:
     """
     Simula una ronda de apuestas completa usando la política dada (logits) para cada jugador.
@@ -239,7 +239,7 @@ def run_betting_round(initial_state: GameState, policy_logits: jnp.ndarray, key:
     )
     return final_state
 
-@jax.jit
+# @jax.jit
 def create_initial_state(key: Array) -> GameState:
     # Baraja la baraja
     deck = jnp.arange(52)
@@ -269,7 +269,7 @@ def create_initial_state(key: Array) -> GameState:
         deck_pointer=deck_pointer
     )
 
-@partial(jax.jit, static_argnums=1)
+# @partial(jax.jit, static_argnums=1)
 def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState:
     start = state.deck_pointer[0]
     cards = jax.lax.dynamic_slice(
@@ -294,7 +294,7 @@ def _deal_community_cards(state: GameState, num_cards_to_deal: int) -> GameState
         deck_pointer=new_deck_pointer
     )
 
-@jax.jit
+# @jax.jit
 def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) -> GameState:
     """
     Simula una mano completa de póker (hasta 4 rondas de apuestas).
@@ -335,7 +335,7 @@ def play_game(initial_state: GameState, policy_logits: jnp.ndarray, key: Array) 
     )
     return final_state
 
-@jax.jit
+# @jax.jit
 def resolve_showdown(state: GameState) -> jnp.ndarray:
     """
     Calcula los payoffs finales para cada jugador al terminar la mano.
