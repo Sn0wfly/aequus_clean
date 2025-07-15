@@ -129,13 +129,27 @@ def step(state: GameState, action: int) -> GameState:
             community_cards=state.community_cards,
             current_player_idx=state.current_player_idx,
             street=state.street,
-            pot_size=state.pot_size
+            pot_size=state.pot_size,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer
         )
         return _update_turn(new_state)
 
     def do_check(state):
         # No cambios, solo avanza el turno
-        return _update_turn(state)
+        new_state = GameState(
+            stacks=state.stacks,
+            bets=state.bets,
+            player_status=state.player_status,
+            hole_cards=state.hole_cards,
+            community_cards=state.community_cards,
+            current_player_idx=state.current_player_idx,
+            street=state.street,
+            pot_size=state.pot_size,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer
+        )
+        return _update_turn(new_state)
 
     def do_call(state):
         amount_to_call = jnp.max(state.bets) - state.bets[player_idx]
@@ -150,7 +164,9 @@ def step(state: GameState, action: int) -> GameState:
             community_cards=state.community_cards,
             current_player_idx=state.current_player_idx,
             street=state.street,
-            pot_size=new_pot
+            pot_size=new_pot,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer
         )
         return _update_turn(new_state)
 
@@ -167,7 +183,9 @@ def step(state: GameState, action: int) -> GameState:
             community_cards=state.community_cards,
             current_player_idx=state.current_player_idx,
             street=state.street,
-            pot_size=new_pot
+            pot_size=new_pot,
+            deck=state.deck,
+            deck_pointer=state.deck_pointer
         )
         return _update_turn(new_state)
 
