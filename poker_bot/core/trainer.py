@@ -7,7 +7,7 @@ import pickle
 import os
 import time
 from dataclasses import dataclass
-from . import jax_game_engine as ege  # CAMBIADO: motor elite en lugar de full_game_engine
+from . import full_game_engine as fge  # ARREGLADO: motor con historiales reales
 from jax import Array
 from functools import partial
 from jax import lax
@@ -115,7 +115,7 @@ class TrainerConfig:
     batch_size: int = 128
     num_actions: int = 6
     max_info_sets: int = 50_000
-    
+
     # SUPER-HUMANO: Configuraciones para entrenamientos largos
     learning_rate: float = 0.01
     position_awareness_factor: float = 0.3  # Fuerza del position learning
@@ -131,33 +131,56 @@ class TrainerConfig:
 @jax.jit
 def elite_batch_play(keys):
     """
-    Wrapper JIT-compatible que usa el motor elite y retorna formato compatible con CFR.
-    Retorna (payoffs, histories) como esperaba el trainer original.
+    ARREGLADO: Usa el motor real con historiales reales de acciones.
+    Retorna (payoffs, histories) donde histories son las acciones REALES que llevaron al payoff.
     """
-    # Usar el motor elite para simular juegos
-    game_results = ege.batch_simulate(keys)
+    # Usar el motor con historiales reales
+    payoffs, action_histories = fge.batch_play(keys)
     
-    # Extraer payoffs (ya en formato correcto)
-    payoffs = game_results['payoffs']
+    # action_histories ya contiene las acciones reales, no sintéticas
+    return payoffs, action_histories
+
+@jax.jit 
+def simulate_games_for_info_sets(keys):
+    """
+    NUEVO: Simula juegos y retorna formato compatible con compute_advanced_info_set.
+    Usa el mismo motor real pero retorna formato de diccionario.
+    """
+    # Usar el motor real para simular
+    payoffs, action_histories = fge.batch_play(keys)
     
-    # Construir historias sintéticas basadas en los resultados del juego
-    # Por ahora usamos una historia simplificada hasta que implementemos el historial completo.
-    batch_size = payoffs.shape[0]
-    max_history_length = 60
+    # Necesitamos recrear los datos del juego para info sets
+    # Extraer las cartas de los estados finales
+    batch_size = len(keys)
     
-    # Crear historias basadas en los resultados del juego
-    histories = jnp.full((batch_size, max_history_length), -1, dtype=jnp.int32)
+    # Simular cartas usando las mismas semillas 
+    def extract_game_data(key):
+        # Recrear el deck para obtener hole cards y community cards
+        deck = jax.random.permutation(key, jnp.arange(52, dtype=jnp.int8))
+        
+        # Extraer hole cards (primeras 12 cartas para 6 jugadores)
+        hole_cards = deck[:12].reshape((6, 2))
+        
+        # Extraer community cards (5 cartas después de las hole cards)
+        community_cards = deck[12:17]
+        
+        return {
+            'hole_cards': hole_cards,
+            'community_cards': community_cards
+        }
     
-    # Simular algunas acciones básicas por juego usando lax.fori_loop (compatible con JIT)
-    def add_action(i, hist):
-        # Acciones aleatorias pero deterministas basadas en el payoff
-        action_seed = payoffs[:, 0] + i  # Usar payoff como semilla
-        actions = jnp.mod(jnp.abs(action_seed).astype(jnp.int32), 6)  # 0-5 para 6 acciones
-        return hist.at[:, i].set(actions)
+    # Extraer datos para todo el batch
+    batch_game_data = jax.vmap(extract_game_data)(keys)
     
-    histories = lax.fori_loop(0, jnp.minimum(10, max_history_length), add_action, histories)
-    
-    return payoffs, histories
+    # Crear formato compatible con compute_advanced_info_set
+    return {
+        'payoffs': payoffs,
+        'hole_cards': batch_game_data['hole_cards'],  # [batch_size, 6, 2]
+        'final_community': batch_game_data['community_cards'],  # [batch_size, 5]
+        'final_pot': jnp.sum(jnp.abs(payoffs), axis=1),  # Aproximar pot size
+        'player_stacks': jnp.ones((batch_size, 6)) * 100.0,  # Stack inicial
+        'player_bets': jnp.abs(payoffs)  # Usar payoffs como proxy de bets
+    }
 
 # ---------- Info Set Computation con Bucketing Avanzado ----------
 def compute_advanced_info_set(game_results, player_idx, game_idx):
@@ -383,7 +406,7 @@ def _jitted_train_step(regrets, strategy, key):
     payoffs, histories = elite_batch_play(keys)
     
     # También obtener resultados completos para info sets reales
-    game_results = ege.batch_simulate(keys)
+    game_results = simulate_games_for_info_sets(keys)
     
     # Procesar todos los juegos del batch directamente
     def process_single_game(game_idx):
@@ -531,7 +554,7 @@ def _jitted_train_step(regrets, strategy, key):
         positive_regrets / regret_sums,
         jnp.ones((cfg.max_info_sets, cfg.num_actions)) / cfg.num_actions
     )
-
+    
     return accumulated_regrets, new_strategy
 
 # ---------- Evaluación Objetiva de Poker Knowledge ----------
@@ -814,7 +837,7 @@ class PokerTrainer:
         # Generar datos de muestra para debug
         debug_key = jax.random.PRNGKey(42)
         debug_keys = jax.random.split(debug_key, 128)
-        debug_game_results = ege.batch_simulate(debug_keys)
+        debug_game_results = simulate_games_for_info_sets(debug_keys)
         debug_analysis = debug_info_set_distribution(self.strategy, debug_game_results)
         
         import time
@@ -847,7 +870,7 @@ class PokerTrainer:
                 # NUEVO: Debug intermedio en la mitad del entrenamiento
                 if self.iteration == num_iterations // 2:
                     logger.info("\n🔍 DIAGNÓSTICO INTERMEDIO (50% completado)...")
-                    mid_game_results = ege.batch_simulate(jax.random.split(iter_key, 128))
+                    mid_game_results = simulate_games_for_info_sets(jax.random.split(iter_key, 128))
                     mid_analysis = debug_info_set_distribution(self.strategy, mid_game_results)
                     
                     # Comparar con estado inicial
@@ -883,7 +906,7 @@ class PokerTrainer:
         # NUEVO: Debug final completo
         logger.info("\n🔍 DIAGNÓSTICO FINAL...")
         final_keys = jax.random.split(jax.random.PRNGKey(99), 128)
-        final_game_results = ege.batch_simulate(final_keys)
+        final_game_results = simulate_games_for_info_sets(final_keys)
         final_analysis = debug_info_set_distribution(self.strategy, final_game_results)
         
         # Guardamos el modelo final
