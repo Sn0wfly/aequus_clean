@@ -21,7 +21,7 @@ class TrainerConfig:
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step ----------
-@jax.jit
+# @jax.jit  # Temporarily removed to force recompilation
 def _jitted_train_step(regrets, strategy, key):
     """
     Un paso de CFR simplificado que evita mezclar vmap con scan
