@@ -33,7 +33,6 @@ def _jitted_train_step(regrets, strategy, key):
     def game_step(carry, step_idx):
         regrets, strategy = carry
         
-        # En lugar de devolver arrays completos, calculamos solo los CAMBIOS
         def one_game(batch_idx):
             payoff = payoffs[batch_idx]
             history = histories[batch_idx]
@@ -41,10 +40,7 @@ def _jitted_train_step(regrets, strategy, key):
             valid = action != -1
             
             def do_update():
-                # Reconstruimos el estado
                 state = fge.initial_state_for_idx(batch_idx)
-                
-                # Aplicamos acciones hasta el paso actual
                 state = lax.fori_loop(
                     0, step_idx + 1,
                     lambda i, s: lax.cond(
@@ -59,7 +55,6 @@ def _jitted_train_step(regrets, strategy, key):
                 player_idx = state.cur_player[0]
                 legal = fge.get_legal_actions(state)
                 
-                # Valores contrafactuales
                 def cfv(a):
                     return lax.cond(legal[a], lambda: payoff[player_idx], lambda: 0.0)
                 cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
@@ -67,56 +62,41 @@ def _jitted_train_step(regrets, strategy, key):
                 
                 info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
                 
-                # IMPORTANTE: Devolvemos solo el índice y el delta, NO los arrays completos
                 return info_set_idx, regret_delta
             
-            # Si no es válido, devolvemos valores neutros
             info_idx, delta = lax.cond(
                 valid, 
                 do_update, 
                 lambda: (0, jnp.zeros(cfg.num_actions))
             )
             
-            # Máscara de validez
             masked_delta = jnp.where(valid, delta, 0.0)
             
             return info_idx, masked_delta
 
-        # Ahora vmap devuelve solo índices y deltas, no arrays completos
         info_indices, deltas = jax.vmap(one_game)(jnp.arange(cfg.batch_size))
         
-        # info_indices tiene forma [batch_size]
-        # deltas tiene forma [batch_size, num_actions]
-        
-        # Acumulamos los deltas en los regrets
-        # Usamos un loop simple para evitar problemas con scatter
         def accumulate_deltas(i, acc_regrets):
             idx = info_indices[i]
             delta = deltas[i]
             return acc_regrets.at[idx].add(delta)
         
-        # Aplicamos las actualizaciones
         new_regrets = lax.fori_loop(
             0, cfg.batch_size,
             accumulate_deltas,
             regrets
         )
         
-        # Actualizamos la estrategia con regret matching
         positive_regrets = jnp.maximum(new_regrets, 0.0)
         regret_sums = jnp.sum(positive_regrets, axis=1, keepdims=True)
-        
-        # Evitamos división por cero
         new_strategy = jnp.where(
             regret_sums > 0,
             positive_regrets / regret_sums,
             jnp.ones((cfg.max_info_sets, cfg.num_actions)) / cfg.num_actions
         )
         
-        # Retornamos el carry actualizado (mismas dimensiones que la entrada)
         return (new_regrets, new_strategy), None
 
-    # Ejecutamos scan sobre todos los pasos del juego
     (final_regrets, final_strategy), _ = lax.scan(
         game_step,
         (regrets, strategy),
