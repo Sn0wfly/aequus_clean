@@ -1090,17 +1090,18 @@ def validate_training_data_integrity(strategy, key, verbose=True):
         if verbose:
             logger.error(f"   ❌ No hay acciones válidas en los historiales")
     
-    # THRESHOLD MÁS REALISTA para diversidad
-    diversity_threshold = 0.02  # 2% diversidad mínima (más realista para poker)
+    # VALIDACIÓN CORREGIDA PARA POKER: Verificar que todas las acciones estén presentes
+    poker_diversity_ok = (unique_valid_actions == 6) and (total_valid_actions > 100)
     
-    if history_diversity > diversity_threshold:
+    if poker_diversity_ok:
         validation_results['real_histories_detected'] = True
         if verbose:
-            logger.info(f"   ✅ Historiales reales detectados (diversidad: {history_diversity:.3f})")
+            logger.info(f"   ✅ Historiales reales detectados: {unique_valid_actions}/6 acciones presentes")
+            logger.info(f"   ✅ Volumen suficiente: {total_valid_actions} acciones totales")
     else:
         validation_results['critical_bugs'].append("HISTORIALES_SINTÉTICOS")
         if verbose:
-            logger.error(f"   ❌ Posibles historiales sintéticos (diversidad: {history_diversity:.3f})")
+            logger.error(f"   ❌ Problema: Solo {unique_valid_actions}/6 acciones o volumen bajo")
     
     # TEST 2: Verificar consistencia de info sets
     if verbose:
@@ -1535,6 +1536,7 @@ class SuperHumanTrainerConfig(TrainerConfig):
     snapshot_iterations: list = None    # Se calculará automáticamente
     
     # Learning rates adaptativos
+    learning_rate: float = 0.015        # Learning rate base optimizado
     initial_learning_rate: float = 0.02
     final_learning_rate: float = 0.005
     learning_decay_factor: float = 0.95
