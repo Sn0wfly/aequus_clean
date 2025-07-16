@@ -146,7 +146,7 @@ def test_mccfr_algorithm():
         # Run training iterations
         for iteration in range(100):
             for player in range(2):
-                algorithm._external_sampling_update(root_game, player, 1.0, 1.0)
+                algorithm._external_sampling_update(root_game, player, 1.0, 1.0, 0, 100)
             algorithm.iteration += 1
         
         training_time = time.time() - start_time

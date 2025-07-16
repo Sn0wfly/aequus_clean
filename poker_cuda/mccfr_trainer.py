@@ -176,7 +176,7 @@ class MCCFRTrainer:
         if isinstance(self.algorithm, ExternalSamplingMCCFR):
             # External sampling trains each player separately
             for player in range(self.config.num_players):
-                self.algorithm._external_sampling_update(root_history, player, 1.0, 1.0)
+                self.algorithm._external_sampling_update(root_history, player, 1.0, 1.0, 0, 100)
         elif isinstance(self.algorithm, OutcomeSamplingMCCFR):
             # Outcome sampling trains each player separately  
             for player in range(self.config.num_players):
