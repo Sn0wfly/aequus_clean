@@ -32,7 +32,7 @@ class MCCFRConfig:
     exploration: float = 0.6  # ε-greedy para exploration
 
 # ---------- MCCFR Outcome Sampling REAL ----------
-@jax.jit
+@jax.jit(static_argnames=['batch_size', 'num_actions', 'max_info_sets', 'exploration'])
 def _mccfr_step(regrets, strategy, key, batch_size, num_actions, max_info_sets, exploration):
     """
     Monte Carlo CFR (outcome sampling) - IMPLEMENTACIÓN REAL
