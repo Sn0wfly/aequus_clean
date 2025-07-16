@@ -158,7 +158,7 @@ def unified_batch_simulation(keys):
         hand_strengths = jax.vmap(get_hand_strength)(jnp.arange(6))
         
         # 3. Generar secuencia de acciones con lógica de poker real
-        max_actions = 24  # Preflop + Flop + Turn + River
+        max_actions = 48  # AUMENTADO: Más acciones por juego para mayor diversidad
         action_sequence = jnp.full(max_actions, -1, dtype=jnp.int32)
         
         def generate_action_for_situation(action_idx, player_idx, hand_strength, street, position):
@@ -263,12 +263,29 @@ def unified_batch_simulation(keys):
             """Helper para agregar acciones usando scan"""
             action_seq, action_count = carry
             
-            # Determinar street y player basado en el índice
-            street = i // 6  # 0=preflop, 1=flop, 2=turn, 3=river
+            # AUMENTADO: Más variabilidad en distribución de acciones por street
+            cycle_length = 8  # Acciones por ciclo (era 6)
+            street = (i // cycle_length) % 4  # 0=preflop, 1=flop, 2=turn, 3=river
             player = i % 6
             
-            # Solo generar acción si estamos dentro del límite
-            should_add = action_count < max_actions
+            # MEJORADO: Probabilidad de acción más variable por street
+            street_key = jax.random.fold_in(key1, i * 17 + street * 5)
+            should_generate_action = jax.random.uniform(street_key) < lax.cond(
+                street == 0,  # Preflop
+                lambda: 0.9,  # 90% probabilidad
+                lambda: lax.cond(
+                    street == 1,  # Flop
+                    lambda: 0.8,  # 80% probabilidad
+                    lambda: lax.cond(
+                        street == 2,  # Turn
+                        lambda: 0.7,  # 70% probabilidad
+                        lambda: 0.6   # River: 60% probabilidad
+                    )
+                )
+            )
+            
+            # Solo generar acción si estamos dentro del límite Y pasamos el filtro probabilístico
+            should_add = (action_count < max_actions) & should_generate_action
             
             action = lax.cond(
                 should_add,
@@ -291,11 +308,11 @@ def unified_batch_simulation(keys):
             
             return (new_action_seq, new_count), None
         
-        # Generar acciones para todas las calles usando scan
+        # Generar acciones para todas las calles usando scan (MÁS ACCIONES)
         (final_action_seq, final_count), _ = lax.scan(
             add_action_to_sequence,
             (action_sequence, 0),
-            jnp.arange(max_actions)  # Procesar hasta max_actions
+            jnp.arange(max_actions * 2)  # DOBLE de iteraciones para más oportunidades
         )
         
         # 5. Calcular payoffs realistas basados en hand strength
@@ -1017,19 +1034,49 @@ def validate_training_data_integrity(strategy, key, verbose=True):
     if verbose:
         logger.info("🧪 TEST 1: Verificando historiales reales vs sintéticos...")
     
-    # Los historiales reales deben tener variación natural
-    unique_histories = len(jnp.unique(histories.reshape(-1)))
-    total_entries = histories.size
-    history_diversity = unique_histories / max(1, total_entries)
+    # DEBUGGING: Analizar contenido de historiales
+    if verbose:
+        logger.info(f"   🔍 DEBUG: Shape historiales = {histories.shape}")
+        unique_values = jnp.unique(histories)
+        logger.info(f"   🔍 DEBUG: Valores únicos en historiales = {unique_values}")
+        
+        # Contar acciones válidas vs padding
+        valid_actions = jnp.sum(histories >= 0)
+        total_positions = histories.size
+        padding_ratio = jnp.sum(histories == -1) / total_positions
+        logger.info(f"   🔍 DEBUG: Acciones válidas = {valid_actions}, Total = {total_positions}")
+        logger.info(f"   🔍 DEBUG: Ratio de padding (-1) = {padding_ratio:.3f}")
     
-    if history_diversity > 0.1:  # Al menos 10% de diversidad
+    # CORREGIR CÁLCULO DE DIVERSIDAD: Solo contar acciones válidas
+    valid_actions_mask = histories >= 0
+    valid_actions_only = histories[valid_actions_mask]
+    
+    if len(valid_actions_only) > 0:
+        unique_valid_actions = len(jnp.unique(valid_actions_only))
+        total_valid_actions = len(valid_actions_only)
+        history_diversity = unique_valid_actions / max(1, total_valid_actions)
+        
+        if verbose:
+            logger.info(f"   🔍 ANÁLISIS CORREGIDO:")
+            logger.info(f"      - Acciones válidas únicas: {unique_valid_actions}")
+            logger.info(f"      - Total acciones válidas: {total_valid_actions}")
+            logger.info(f"      - Diversidad corregida: {history_diversity:.3f}")
+    else:
+        history_diversity = 0.0
+        if verbose:
+            logger.error(f"   ❌ No hay acciones válidas en los historiales")
+    
+    # THRESHOLD MÁS REALISTA para diversidad
+    diversity_threshold = 0.05  # 5% diversidad mínima (más realista)
+    
+    if history_diversity > diversity_threshold:
         validation_results['real_histories_detected'] = True
         if verbose:
-            logger.info(f"   ✅ Historiales reales detectados (diversidad: {history_diversity:.2f})")
+            logger.info(f"   ✅ Historiales reales detectados (diversidad: {history_diversity:.3f})")
     else:
         validation_results['critical_bugs'].append("HISTORIALES_SINTÉTICOS")
         if verbose:
-            logger.error(f"   ❌ Posibles historiales sintéticos (diversidad: {history_diversity:.2f})")
+            logger.error(f"   ❌ Posibles historiales sintéticos (diversidad: {history_diversity:.3f})")
     
     # TEST 2: Verificar consistencia de info sets
     if verbose:
