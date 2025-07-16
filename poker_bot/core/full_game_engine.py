@@ -43,17 +43,28 @@ class GameState:
     def tree_unflatten(cls, _, children):
         return cls(*children)
 
-# ---------- Callback (VERSIÓN MOCK PARA BENCHMARKING) ----------
+# ---------- FIXED: Real Hand Evaluator ----------
 def evaluate_hand_wrapper(cards_device):
     """
-    Mock-evaluador temporal. No calcula la fuerza real de la mano.
-    Su propósito es ser extremadamente rápido para medir el overhead del pure_callback.
-    Devuelve un valor pseudo-aleatorio basado en las cartas.
+    REAL poker hand evaluator using phevaluator.
+    Returns actual hand strength for proper showdowns.
     """
     cards_np = np.asarray(cards_device)
-    # Una operación simple y rápida que depende de las cartas.
-    mock_strength = np.sum(cards_np).astype(np.int32) % 7462
-    return mock_strength if np.all(cards_np != -1) else np.int32(9999)
+    
+    # Filter valid cards (>= 0)
+    valid_cards = cards_np[cards_np >= 0]
+    
+    if len(valid_cards) >= 5:
+        try:
+            # Use the REAL evaluator instance
+            strength = evaluator.evaluate_single(valid_cards.tolist())
+            # phevaluator returns lower = better, invert for higher = better
+            return np.int32(7462 - strength)
+        except Exception as e:
+            print(f"Evaluator error: {e}")
+            return np.int32(0)
+    else:
+        return np.int32(0)  # Invalid hand
 
 # ---------- Helpers ----------
 @jax.jit
