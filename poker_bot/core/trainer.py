@@ -39,12 +39,12 @@ def evaluate_hand_jax(cards_jax):
         is_pair = (ranks[0] == ranks[1]).astype(jnp.int32)
         pair_strength = lax.cond(
             is_pair == 1,
-            lambda: 2500 + high_rank * 200,  # AA=4900, KK=4700, etc.
-            lambda: 0
+            lambda: jnp.int32(2500 + high_rank * 200),  # AA=4900, KK=4700, etc.
+            lambda: jnp.int32(0)
         )
         
         # HIGH CARDS - Face cards premium
-        high_card_strength = (high_rank * 15 + low_rank) * 8
+        high_card_strength = ((high_rank * 15 + low_rank) * 8).astype(jnp.int32)
         
         # SUITED PREMIUM - Professional level bonus
         is_suited = (suits[0] == suits[1]).astype(jnp.int32)
@@ -52,14 +52,14 @@ def evaluate_hand_jax(cards_jax):
             is_suited == 1,
             lambda: lax.cond(
                 high_rank >= 10,  # J+ suited
-                lambda: 800,      # Premium suited
+                lambda: jnp.int32(800),      # Premium suited
                 lambda: lax.cond(
                     rank_diff <= 4,  # Suited connectors
-                    lambda: 500,     # Good suited
-                    lambda: 300      # Basic suited
+                    lambda: jnp.int32(500),     # Good suited
+                    lambda: jnp.int32(300)      # Basic suited
                 )
             ),
-            lambda: 0
+            lambda: jnp.int32(0)
         )
         
         # CONNECTORS - Straight potential
@@ -67,24 +67,24 @@ def evaluate_hand_jax(cards_jax):
             rank_diff <= 4,  # 5 card straight possible
             lambda: lax.cond(
                 rank_diff == 1,  # Perfect connector
-                lambda: 400,
+                lambda: jnp.int32(400),
                 lambda: lax.cond(
                     rank_diff <= 2,  # 1-gap connector
-                    lambda: 200,
-                    lambda: 100      # 2+ gap
+                    lambda: jnp.int32(200),
+                    lambda: jnp.int32(100)      # 2+ gap
                 )
             ),
-            lambda: 0
+            lambda: jnp.int32(0)
         )
         
         # BROADWAY - T+ cards
         broadway_bonus = lax.cond(
             (high_rank >= 9) & (low_rank >= 9),  # Both T+
-            lambda: 600,
+            lambda: jnp.int32(600),
             lambda: lax.cond(
                 high_rank >= 11,  # K+ high card
-                lambda: 300,
-                lambda: 0
+                lambda: jnp.int32(300),
+                lambda: jnp.int32(0)
             )
         )
         
