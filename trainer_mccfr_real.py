@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCCFR REAL - Monte Carlo CFR sin lógica hardcodeada
+MCCFR REAL - Monte Carlo CFR sin lógica hardcodeada!
 Implementación teóricamente correcta usando outcome sampling
 
 CORRIGE los problemas del código de Kimi:
