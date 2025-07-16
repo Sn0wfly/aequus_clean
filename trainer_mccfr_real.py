@@ -33,7 +33,7 @@ class MCCFRConfig:
 
 # ---------- MCCFR Outcome Sampling REAL ----------
 @jax.jit
-def _mccfr_step(regrets, strategy, cfg: MCCFRConfig, key):
+def _mccfr_step(regrets, strategy, key, batch_size, num_actions, max_info_sets, exploration):
     """
     Monte Carlo CFR (outcome sampling) - IMPLEMENTACIÓN REAL
     
@@ -42,7 +42,7 @@ def _mccfr_step(regrets, strategy, cfg: MCCFRConfig, key):
     3. Actualiza regrets basándose solo en payoffs finales
     4. SIN lógica hardcodeada de poker
     """
-    keys = jax.random.split(key, cfg.batch_size)
+    keys = jax.random.split(key, batch_size)
     
     # 1. Simular juegos completos usando nuestro motor real
     payoffs, histories, game_results = unified_batch_simulation(keys)
@@ -56,7 +56,7 @@ def _mccfr_step(regrets, strategy, cfg: MCCFRConfig, key):
         valid_actions_mask = game_history >= 0
         valid_actions = game_history[valid_actions_mask]
         
-        game_regrets = jnp.zeros((cfg.max_info_sets, cfg.num_actions))
+        game_regrets = jnp.zeros((max_info_sets, num_actions))
         
         # 2. Para cada jugador, calcular regrets contrafactuales
         def update_player_regrets(player_idx):
@@ -109,7 +109,7 @@ def _mccfr_step(regrets, strategy, cfg: MCCFRConfig, key):
                 return jnp.clip(regret, -50.0, 50.0)  # Evitar valores extremos
             
             # Calcular regrets para todas las acciones
-            action_regrets = vmap(calculate_counterfactual_regret)(jnp.arange(cfg.num_actions))
+            action_regrets = vmap(calculate_counterfactual_regret)(jnp.arange(num_actions))
             
             # Actualizar regrets para este info set
             return game_regrets.at[info_set_idx].add(action_regrets)
@@ -122,7 +122,7 @@ def _mccfr_step(regrets, strategy, cfg: MCCFRConfig, key):
         return final_regrets
     
     # 4. Procesar todos los juegos del batch
-    batch_regrets = vmap(process_single_game)(jnp.arange(cfg.batch_size))
+    batch_regrets = vmap(process_single_game)(jnp.arange(batch_size))
     
     # 5. Acumular regrets
     accumulated_regrets = regrets + jnp.sum(batch_regrets, axis=0)
@@ -135,7 +135,7 @@ def _mccfr_step(regrets, strategy, cfg: MCCFRConfig, key):
     new_strategy = jnp.where(
         regret_sums > 1e-6,
         positive_regrets / regret_sums,
-        jnp.ones((cfg.max_info_sets, cfg.num_actions)) / cfg.num_actions
+        jnp.ones((max_info_sets, num_actions)) / num_actions
     )
     
     return accumulated_regrets, new_strategy
@@ -213,7 +213,9 @@ class MCCFRTrainer:
             
             # Un paso de MCCFR
             self.regrets, self.strategy = _mccfr_step(
-                self.regrets, self.strategy, self.cfg, subkey
+                self.regrets, self.strategy, subkey,
+                self.cfg.batch_size, self.cfg.num_actions, 
+                self.cfg.max_info_sets, self.cfg.exploration
             )
             
             # Esperar a que termine la computación GPU
