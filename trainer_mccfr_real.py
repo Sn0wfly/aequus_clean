@@ -82,12 +82,14 @@ def compute_rich_info_set(game_results, player_idx, game_idx, history_sum, max_i
     def evaluate_full_hand():
         # Solo si tenemos board completo (river)
         full_hand = jnp.concatenate([hole_cards, community_cards])
-        return evaluate_hand_jax(full_hand)
+        strength = evaluate_hand_jax(full_hand)
+        return strength.astype(jnp.int32)
     
     def use_preflop_strength():
         # Preflop hand strength approximation
         high_card = jnp.maximum(hole_cards[0] // 4, hole_cards[1] // 4)
-        return high_card * 100 + hole_rank_sum * 10 + is_suited.astype(jnp.int32) * 5
+        result = high_card * 100 + hole_rank_sum * 10 + is_suited.astype(jnp.int32) * 5
+        return result.astype(jnp.int32)
     
     hand_strength = lax.cond(
         num_community >= 5,  # River - evaluar real
@@ -95,23 +97,23 @@ def compute_rich_info_set(game_results, player_idx, game_idx, history_sum, max_i
         use_preflop_strength  # Pre-river - usar aproximación
     )
     
-    # 5. GAME CONTEXT - Actividad y historia
-    game_activity = history_sum / jnp.maximum(1, num_community + 1)
+    # 5. GAME CONTEXT - Actividad y historia (mantener como int)
+    game_activity = history_sum // jnp.maximum(1, num_community + 1)  # División entera
     
     # 6. COMBINAR TODO EN INFO SET ÚNICO
-    # Usar factores primos para evitar colisiones
+    # Usar factores primos para evitar colisiones - ASEGURAR INT32
     info_set_components = (
-        hole_rank_sum * 2003 +                    # Hole cards base
-        is_pocket_pair.astype(jnp.int32) * 4007 +  # Pocket pair bonus
-        is_suited.astype(jnp.int32) * 6011 +       # Suited bonus  
-        position_strength * 8017 +                 # Position factor
-        (num_community % 4) * 10037 +              # Street (0=preflop, 3=river)
-        (hand_strength % 1000) * 12041 +           # Hand strength bucket
-        (game_activity % 100) * 14051 +            # Game activity
-        player_idx * 16061                         # Player index
+        hole_rank_sum.astype(jnp.int32) * 2003 +                      # Hole cards base
+        is_pocket_pair.astype(jnp.int32) * 4007 +                     # Pocket pair bonus
+        is_suited.astype(jnp.int32) * 6011 +                          # Suited bonus  
+        position_strength.astype(jnp.int32) * 8017 +                  # Position factor
+        (num_community % 4).astype(jnp.int32) * 10037 +               # Street (0=preflop, 3=river)
+        (hand_strength.astype(jnp.int32) % 1000) * 12041 +            # Hand strength bucket
+        (game_activity.astype(jnp.int32) % 100) * 14051 +             # Game activity
+        player_idx.astype(jnp.int32) * 16061                          # Player index
     )
     
-    return info_set_components % max_info_sets
+    return (info_set_components % max_info_sets).astype(jnp.int32)
 
 # ---------- MCCFR Outcome Sampling REAL ----------
 @jax.jit
