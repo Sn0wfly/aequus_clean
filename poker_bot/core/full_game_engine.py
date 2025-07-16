@@ -43,11 +43,17 @@ class GameState:
     def tree_unflatten(cls, _, children):
         return cls(*children)
 
-# ---------- Callback ----------
+# ---------- Callback (VERSIÓN MOCK PARA BENCHMARKING) ----------
 def evaluate_hand_wrapper(cards_device):
-    cards_list = np.asarray(cards_device).tolist()
-    valid_cards = [c for c in cards_list if c != -1]
-    return np.int32(evaluator.evaluate_single(valid_cards)) if len(valid_cards) >= 5 else np.int32(9999)
+    """
+    Mock-evaluador temporal. No calcula la fuerza real de la mano.
+    Su propósito es ser extremadamente rápido para medir el overhead del pure_callback.
+    Devuelve un valor pseudo-aleatorio basado en las cartas.
+    """
+    cards_np = np.asarray(cards_device)
+    # Una operación simple y rápida que depende de las cartas.
+    mock_strength = np.sum(cards_np).astype(np.int32) % 7462
+    return mock_strength if np.all(cards_np != -1) else np.int32(9999)
 
 # ---------- Helpers ----------
 @jax.jit
