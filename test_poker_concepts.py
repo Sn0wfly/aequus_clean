@@ -59,7 +59,7 @@ class TestPokerConcepts:
         trainer.train(20, 'test_concepts', 20, snapshot_iterations=[])
         return trainer
     
-    def test_hand_strength_concept(self, trained_model):
+    def test_hand_strength_concept(self, trainer):
         """Test that model differentiates hand strengths"""
         from poker_bot.core.trainer import compute_mock_info_set
         
@@ -80,8 +80,8 @@ class TestPokerConcepts:
             weak_info = compute_mock_info_set(weak, False, 2)
             
             if strong_info < 50000 and weak_info < 50000:
-                strong_strategy = trained_model.strategy[strong_info]
-                weak_strategy = trained_model.strategy[weak_info]
+                strong_strategy = trainer.strategy[strong_info]
+                weak_strategy = trainer.strategy[weak_info]
                 
                 # Strong hands should be more aggressive
                 strong_aggression = float(jnp.sum(strong_strategy[3:6]))  # BET/RAISE/ALLIN
@@ -97,7 +97,7 @@ class TestPokerConcepts:
         assert success_rate >= 0.5, f"Hand strength concept failing: {success_rate:.1%} success rate"
         print(f"🎯 Hand Strength Test: {success_rate:.1%} success rate")
     
-    def test_suited_vs_offsuit(self, trained_model):
+    def test_suited_vs_offsuit(self, trainer):
         """Test that model prefers suited hands"""
         from poker_bot.core.trainer import compute_mock_info_set
         
@@ -115,8 +115,8 @@ class TestPokerConcepts:
             offsuit_info = compute_mock_info_set(hole_ranks, False, 3)
             
             if suited_info < 50000 and offsuit_info < 50000:
-                suited_strategy = trained_model.strategy[suited_info]
-                offsuit_strategy = trained_model.strategy[offsuit_info]
+                suited_strategy = trainer.strategy[suited_info]
+                offsuit_strategy = trainer.strategy[offsuit_info]
                 
                 # Suited should be more aggressive OR fold less
                 suited_aggression = float(jnp.sum(suited_strategy[3:6]))
@@ -138,7 +138,7 @@ class TestPokerConcepts:
         assert success_rate >= 0.5, f"Suited concept failing: {success_rate:.1%} success rate"
         print(f"🎯 Suited Test: {success_rate:.1%} success rate")
     
-    def test_position_awareness(self, trained_model):
+    def test_position_awareness(self, trainer):
         """Test that model plays tighter in early position"""
         from poker_bot.core.trainer import compute_mock_info_set
         
@@ -149,8 +149,8 @@ class TestPokerConcepts:
         late_info = compute_mock_info_set(marginal_hand, True, 5)   # Button
         
         if early_info < 50000 and late_info < 50000:
-            early_strategy = trained_model.strategy[early_info]
-            late_strategy = trained_model.strategy[late_info]
+            early_strategy = trainer.strategy[early_info]
+            late_strategy = trainer.strategy[late_info]
             
             early_fold = float(early_strategy[0])
             late_fold = float(late_strategy[0])
@@ -248,10 +248,16 @@ def run_all_tests():
     print("\n🔧 Testing Poker Concepts (this will take ~30 seconds)...")
     test_concepts = TestPokerConcepts()
     try:
-        trained_model = test_concepts.trained_model()
-        test_concepts.test_hand_strength_concept(trained_model)
-        test_concepts.test_suited_vs_offsuit(trained_model)
-        test_concepts.test_position_awareness(trained_model)
+        # Create trained model manually (not using pytest fixture)
+        config = TrainerConfig()
+        config.batch_size = 32  # Smaller for testing
+        trainer = PokerTrainer(config)
+        trainer.train(20, 'test_concepts', 20, snapshot_iterations=[])
+        
+        # Run tests with the trained model
+        test_concepts.test_hand_strength_concept(trainer)
+        test_concepts.test_suited_vs_offsuit(trainer)
+        test_concepts.test_position_awareness(trainer)
         print("✅ Poker Concepts tests COMPLETED")
     except Exception as e:
         print(f"❌ Poker Concepts tests FAILED: {e}")
