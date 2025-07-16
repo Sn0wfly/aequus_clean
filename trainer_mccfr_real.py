@@ -43,10 +43,10 @@ def _mccfr_step(regrets, strategy, key):
     3. Sin función max() de Python
     4. Solo operaciones vectorizadas compatibles con JIT
     """
-    # Hardcoded config values for JAX compatibility
+    # Hardcoded config values for JAX compatibility (matching fast config)
     batch_size = 128
     num_actions = 6
-    max_info_sets = 50_000
+    max_info_sets = 25_000
     
     keys = jax.random.split(key, batch_size)
     
