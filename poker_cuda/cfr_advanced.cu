@@ -18,8 +18,11 @@ FEATURES PORTED:
 #include <curand_kernel.h>
 #include <stdio.h>
 
-// External real hand evaluator
-extern "C" int cuda_evaluate_single_hand_real(int* cards, int num_cards);
+// ============================================================================
+// 🎯 EXTERNAL DECLARATIONS 
+// ============================================================================
+
+extern "C" __device__ int evaluate_hand_real(int* cards, int num_cards);
 
 // ============================================================================
 // 🎯 ADVANCED CFR CONSTANTS & STRUCTURES
@@ -120,7 +123,7 @@ __device__ inline int compute_postflop_bucket(
     }
     
     // Use real hand evaluator
-    int raw_strength = cuda_evaluate_single_hand_real(full_hand, 2 + num_community);
+    int raw_strength = evaluate_hand_real(full_hand, 2 + num_community);
     *hand_strength_normalized = fminf(1.0f, fmaxf(0.0f, raw_strength / 9000000.0f));
     
     // Convert to bucket (1000 buckets based on strength percentiles)
@@ -150,6 +153,20 @@ __device__ int compute_advanced_info_set_real(
     bool is_pair = (hole_ranks[0] == hole_ranks[1]);
     int high_rank = max(hole_ranks[0], hole_ranks[1]);
     int low_rank = min(hole_ranks[0], hole_ranks[1]);
+    
+    // Preflop bucketing - uses Pluribus-style hand types
+    if (num_community_cards == 0) {
+        int base_bucket = high_rank * 13 + low_rank;
+        
+        // Apply suited/pair bonuses
+        if (is_pair) {
+            base_bucket += 169; // Pair bonus
+        } else if (is_suited) {
+            base_bucket += 50;  // Suited bonus
+        }
+        
+        return base_bucket % 169; // 169 preflop hand types
+    }
     
     // Street bucketing (0=preflop, 1=flop, 2=turn, 3=river)
     int street_bucket = current_street;
@@ -185,19 +202,10 @@ __device__ int compute_advanced_info_set_real(
     int position_type = (player_position < 2) ? 0 : (player_position < 4) ? 1 : 2;
     
     // Combine all factors with careful weight distribution
-    // Total theoretical space: 4 * 1000 * 6 * 20 * 20 * 5 * 4 * 3 = 14.4M
-    // Compress to 50K using modular arithmetic
+    int final_bucket = (base_bucket * 5 + street_bucket * 3 + active_bucket * 2 + 
+                       position_type + betting_round) % MAX_INFO_SETS;
     
-    long long info_set_id = 
-        ((long long)street_bucket * 2000000LL) +
-        ((long long)hand_bucket * 2000LL) +
-        ((long long)position_bucket * 300LL) +
-        ((long long)pot_bucket * 15LL) +
-        ((long long)stack_bucket * 1LL) +
-        ((long long)active_bucket * 100000LL) +
-        ((long long)position_type * 500000LL);
-    
-    return (int)(info_set_id % MAX_INFO_SETS);
+    return final_bucket;
 }
 
 // ============================================================================
@@ -308,7 +316,7 @@ __device__ void simulate_realistic_poker_game(
                     full_hand[3] = game->community_cards[1];
                     full_hand[4] = game->community_cards[2];
                     
-                    int raw_strength = cuda_evaluate_single_hand_real(full_hand, 5);
+                    int raw_strength = evaluate_hand_real(full_hand, 5);
                     hand_strengths[player] = fminf(1.0f, raw_strength / 5000000.0f);
                 }
             }
@@ -418,7 +426,7 @@ __device__ void simulate_realistic_poker_game(
                     full_hand[2 + i] = game->community_cards[i];
                 }
                 
-                int raw_strength = cuda_evaluate_single_hand_real(full_hand, 7);
+                int raw_strength = evaluate_hand_real(full_hand, 7);
                 float normalized_strength = (float)raw_strength;
                 
                 if (normalized_strength > best_strength) {
