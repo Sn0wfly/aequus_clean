@@ -20,7 +20,7 @@ class TrainerConfig:
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step ----------
-@jax.jit
+@partial(jax.jit, static_argnums=(3, 4, 5))
 def _jitted_train_step(regrets, strategy, key, num_actions, max_info_sets, batch_size):
     """
     CFR real sin bucles Python.
