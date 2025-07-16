@@ -331,7 +331,7 @@ __device__ void simulate_realistic_poker_game(
         }
         
         // Betting round simulation
-        int active_players = 0;
+        active_players = 0;
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (game->player_active[i]) active_players++;
         }
@@ -398,8 +398,8 @@ __device__ void simulate_realistic_poker_game(
     }
     
     // Final evaluation and payoffs
-    // Count current active players
-    int active_players = 0;
+    // Recalculate current active players
+    active_players = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (game->player_active[i]) active_players++;
     }
