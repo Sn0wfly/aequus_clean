@@ -10,6 +10,34 @@ from jax import lax
 from typing import Dict, Tuple
 from enum import IntEnum
 
+# AGREGADO: Importar evaluador real para payoffs correctos
+from poker_bot.evaluator import HandEvaluator
+import logging
+
+# Crear instancia global del evaluador real
+hand_evaluator = HandEvaluator()
+logger = logging.getLogger(__name__)
+
+# ---------- Wrapper para evaluador real compatible con JAX ----------
+def evaluate_hand_jax(cards_device):
+    """
+    Wrapper JAX-compatible para el evaluador real de manos.
+    Usa phevaluator para evaluación profesional de manos.
+    """
+    cards_np = np.asarray(cards_device)
+    
+    # Convertir cartas a formato compatible con evaluador
+    if np.all(cards_np >= 0):  # Solo evaluar si todas las cartas son válidas
+        try:
+            # Usar el evaluador real en lugar del mock
+            strength = hand_evaluator.evaluate_single(cards_np.tolist())
+            return np.int32(strength)
+        except:
+            # Fallback a evaluación simple si falla
+            return np.int32(np.sum(cards_np) % 7462)
+    else:
+        return np.int32(9999)  # Mano inválida
+
 class PlayerAction(IntEnum):
     FOLD = 0
     CHECK = 1
@@ -248,6 +276,106 @@ def calculate_payoffs(state: Dict) -> jnp.ndarray:
     
     return payoffs - state['player_bets']
 
+# ---------- Evaluación Real de Showdowns ----------
+def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
+    """
+    Calcula payoffs reales usando phevaluator para showdowns.
+    Compatible con JAX JIT usando pure_callback.
+    """
+    num_players = state['hole_cards'].shape[0]
+    active_players = ~state['player_folded']
+    num_active = jnp.sum(active_players)
+    
+    # Si solo queda un jugador, se lleva toda la pot
+    def single_winner():
+        payoffs = jnp.where(
+            active_players,
+            state['pot'] - state['player_bets'],
+            -state['player_bets']
+        )
+        return payoffs
+    
+    # Si hay múltiples jugadores, evaluar showdown
+    def showdown_evaluation():
+        def evaluate_all_hands():
+            """
+            Función pura que evalúa todas las manos y retorna ganadores.
+            No compatible con JIT, se llama via pure_callback.
+            """
+            hole_cards_np = np.asarray(state['hole_cards'])
+            community_cards_np = np.asarray(state['community_cards'])
+            active_np = np.asarray(active_players)
+            
+            hand_strengths = []
+            
+            for player_idx in range(num_players):
+                if active_np[player_idx]:
+                    # Combinar hole cards + community cards
+                    player_hole = hole_cards_np[player_idx]
+                    all_cards = np.concatenate([player_hole, community_cards_np])
+                    # Filtrar cartas válidas (>= 0)
+                    valid_cards = all_cards[all_cards >= 0]
+                    
+                    # Evaluar mano si tenemos suficientes cartas
+                    if len(valid_cards) >= 5:
+                        try:
+                            strength = hand_evaluator.evaluate_single(valid_cards.tolist())
+                            hand_strengths.append(strength)
+                        except:
+                            hand_strengths.append(9999)  # Mano inválida
+                    else:
+                        hand_strengths.append(9999)  # Mano inválida
+                else:
+                    hand_strengths.append(9999)  # Jugador foldeado
+            
+            # Encontrar la mejor mano (menor número = mejor en phevaluator)
+            hand_strengths = np.array(hand_strengths)
+            active_strengths = hand_strengths[active_np]
+            
+            if len(active_strengths) > 0:
+                best_strength = np.min(active_strengths)
+                winners = (hand_strengths == best_strength) & active_np
+                num_winners = np.sum(winners)
+                
+                if num_winners > 0:
+                    return winners.astype(np.float32)
+                else:
+                    # Fallback: el primer jugador activo gana
+                    fallback_winners = np.zeros(num_players, dtype=np.float32)
+                    first_active = np.where(active_np)[0]
+                    if len(first_active) > 0:
+                        fallback_winners[first_active[0]] = 1.0
+                    return fallback_winners
+            else:
+                # No hay jugadores activos, devolver array vacío
+                return np.zeros(num_players, dtype=np.float32)
+        
+        # Usar pure_callback para llamar al evaluador desde función JIT
+        winner_mask = jax.pure_callback(
+            evaluate_all_hands,
+            jnp.zeros(num_players, dtype=jnp.float32),
+            vectorized=False
+        )
+        
+        # Distribuir pot entre ganadores
+        num_winners = jnp.sum(winner_mask)
+        pot_share = state['pot'] / jnp.maximum(num_winners, 1)
+        
+        payoffs = jnp.where(
+            winner_mask > 0,
+            pot_share - state['player_bets'],
+            -state['player_bets']
+        )
+        
+        return payoffs
+    
+    # Usar lax.cond para decidir entre un ganador o showdown
+    return lax.cond(
+        num_active <= 1,
+        single_winner,
+        showdown_evaluation
+    )
+
 def simulate_game(rng_key: jnp.ndarray,
                  num_players: int = 6,
                  small_blind: float = 1.0,
@@ -340,16 +468,8 @@ def simulate_game(rng_key: jnp.ndarray,
     max_steps = 50  # Reduced for performance
     final_state = lax.fori_loop(0, max_steps, game_step, state)
     
-    # Calculate simple payoffs
-    active_players = ~final_state['player_folded']
-    num_active = jnp.sum(active_players)
-    
-    # Simple payoff calculation
-    payoffs = jnp.where(
-        active_players,
-        final_state['pot'] / jnp.maximum(num_active, 1) - final_state['player_bets'],
-        -final_state['player_bets']
-    )
+    # Calculate REAL payoffs using phevaluator for showdowns
+    payoffs = calculate_real_payoffs(final_state)
     
     return {
         'payoffs': payoffs,

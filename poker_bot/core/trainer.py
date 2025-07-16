@@ -7,16 +7,12 @@ import pickle
 import os
 from dataclasses import dataclass
 from . import jax_game_engine as ege  # CAMBIADO: motor elite en lugar de full_game_engine
-from poker_bot.evaluator import HandEvaluator  # AGREGADO: evaluador real
 from jax import Array
 from functools import partial
 from jax import lax
 from jax import ShapeDtypeStruct
 
 logger = logging.getLogger(__name__)
-
-# Crear instancia global del evaluador real
-hand_evaluator = HandEvaluator()
 
 # ---------- Wrapper para evaluador real compatible con JAX ----------
 def evaluate_hand_jax(cards_device):
@@ -29,8 +25,8 @@ def evaluate_hand_jax(cards_device):
     # Convertir cartas a formato compatible con evaluador
     if np.all(cards_np >= 0):  # Solo evaluar si todas las cartas son válidas
         try:
-            # Usar el evaluador real en lugar del mock
-            strength = hand_evaluator.evaluate_single(cards_np.tolist())
+            # Usar el evaluador real del motor
+            strength = ege.hand_evaluator.evaluate_single(cards_np.tolist())
             return np.int32(strength)
         except:
             # Fallback a evaluación simple si falla
