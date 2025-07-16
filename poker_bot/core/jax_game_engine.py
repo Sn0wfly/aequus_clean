@@ -354,7 +354,7 @@ def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
         winner_mask = jax.pure_callback(
             evaluate_all_hands,
             jnp.zeros(num_players, dtype=jnp.float32),
-            vectorized=False
+            vmap_method=None
         )
         
         # Distribuir pot entre ganadores
