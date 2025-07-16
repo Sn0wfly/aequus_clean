@@ -21,20 +21,18 @@ class TrainerConfig:
 
 # ---------- JAX-Native CFR Step ----------
 @jax.jit
-def _jitted_train_step(regrets, strategy, key):
+def _jitted_train_step(regrets, strategy, key, num_actions, max_info_sets, batch_size):
     """
     CFR real sin bucles Python.
     1. Simula batch
     2. Reconstruye trayectorias
     3. Actualiza regrets y estrategia
     """
-    cfg = TrainerConfig()  # valores constantes dentro del jit
-    
     # Verificar shapes
-    assert regrets.shape == (cfg.max_info_sets, cfg.num_actions), f"Expected ({cfg.max_info_sets}, {cfg.num_actions}), got {regrets.shape}"
-    assert strategy.shape == (cfg.max_info_sets, cfg.num_actions), f"Expected ({cfg.max_info_sets}, {cfg.num_actions}), got {strategy.shape}"
+    assert regrets.shape == (max_info_sets, num_actions), f"Expected ({max_info_sets}, {num_actions}), got {regrets.shape}"
+    assert strategy.shape == (max_info_sets, num_actions), f"Expected ({max_info_sets}, {num_actions}), got {strategy.shape}"
     
-    keys = jax.random.split(key, cfg.batch_size)
+    keys = jax.random.split(key, batch_size)
     payoffs, histories = fge.batch_play(keys)
 
     def game_step(carry, step_idx):
@@ -64,20 +62,20 @@ def _jitted_train_step(regrets, strategy, key):
 
                 def cfv(a):
                     return lax.cond(legal[a], lambda: payoff[player_idx], lambda: 0.0)
-                cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
+                cfv_all = jax.vmap(cfv)(jnp.arange(num_actions))
                 regret_delta = cfv_all - cfv_all[action]
 
-                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
+                info_set_idx = jnp.mod(player_idx, max_info_sets).astype(jnp.int32)
                 new_regrets = regrets.at[info_set_idx].add(regret_delta)
                 pos = jnp.maximum(new_regrets[info_set_idx], 0.0)
                 norm = jnp.sum(pos)
-                new_strat = jnp.where(norm > 0, pos / norm, jnp.ones(cfg.num_actions) / cfg.num_actions)
+                new_strat = jnp.where(norm > 0, pos / norm, jnp.ones(num_actions) / num_actions)
                 new_strategy = strategy.at[info_set_idx].set(new_strat)
                 return new_regrets, new_strategy
 
             return lax.cond(valid, do_update, lambda: (regrets, strategy))
 
-        return jax.vmap(one_game)(jnp.arange(cfg.batch_size)), None
+        return jax.vmap(one_game)(jnp.arange(batch_size)), None
 
     final_regrets, final_strategy = lax.scan(
         game_step,
@@ -101,7 +99,14 @@ class PokerTrainer:
         for i in range(1, num_iterations + 1):
             self.iteration += 1
             iter_key = jax.random.fold_in(key, self.iteration)
-            self.regrets, self.strategy = _jitted_train_step(self.regrets, self.strategy, iter_key)
+            self.regrets, self.strategy = _jitted_train_step(
+                self.regrets, 
+                self.strategy, 
+                iter_key,
+                self.config.num_actions,
+                self.config.max_info_sets,
+                self.config.batch_size
+            )
             self.regrets.block_until_ready()
             logger.info(f"Iteración {self.iteration} completada.")
             if self.iteration % save_interval == 0:

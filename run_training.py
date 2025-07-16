@@ -8,7 +8,7 @@ if __name__ == "__main__":
     # 1. Crear una configuración de prueba
     config = TrainerConfig(
         batch_size=128,
-        num_actions=14,
+        num_actions=3,  # Cambiado de 14 a 3 para coincidir con el motor de juego
         max_info_sets=50000
     )
 
