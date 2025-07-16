@@ -5,6 +5,7 @@ import numpy as np
 import logging
 import pickle
 import os
+import time
 from dataclasses import dataclass
 from . import jax_game_engine as ege  # CAMBIADO: motor elite en lugar de full_game_engine
 from jax import Array
@@ -236,6 +237,185 @@ def _jitted_train_step(regrets, strategy, key):
 
     return accumulated_regrets, new_strategy
 
+# ---------- Evaluación Objetiva de Poker Knowledge ----------
+def evaluate_poker_intelligence(strategy, config: TrainerConfig):
+    """
+    Evalúa qué tan bien aprende conceptos fundamentales de poker.
+    Retorna un 'Poker IQ Score' de 0-100.
+    """
+    scores = []
+    
+    # Test 1: Hand Strength Awareness (25 puntos)
+    # ¿Juega AA más agresivo que 72o?
+    def test_hand_strength():
+        # Simular pocket aces (0, 4 = As, As)
+        aa_info_set = compute_mock_info_set(hole_ranks=[12, 12], is_suited=False, position=2)
+        # Simular 7-2 offsuit (peor mano)
+        trash_info_set = compute_mock_info_set(hole_ranks=[5, 0], is_suited=False, position=2)
+        
+        if aa_info_set < config.max_info_sets and trash_info_set < config.max_info_sets:
+            aa_strategy = strategy[aa_info_set]
+            trash_strategy = strategy[trash_info_set]
+            
+            # AA debería tener más probabilidad de bet/raise (acciones 3,4,5)
+            aa_aggression = jnp.sum(aa_strategy[3:6])
+            trash_aggression = jnp.sum(trash_strategy[3:6])
+            
+            # Score: 25 puntos si AA es más agresivo
+            if aa_aggression > trash_aggression + 0.1:  # Margen de error
+                return 25.0
+            elif aa_aggression > trash_aggression:
+                return 15.0
+            else:
+                return 0.0
+        return 0.0
+    
+    # Test 2: Position Awareness (25 puntos)
+    # ¿Juega más tight en early position?
+    def test_position_awareness():
+        # Misma mano en posiciones diferentes
+        early_pos_info = compute_mock_info_set(hole_ranks=[10, 9], is_suited=True, position=0)
+        late_pos_info = compute_mock_info_set(hole_ranks=[10, 9], is_suited=True, position=5)
+        
+        if early_pos_info < config.max_info_sets and late_pos_info < config.max_info_sets:
+            early_strategy = strategy[early_pos_info]
+            late_strategy = strategy[late_pos_info]
+            
+            # En posición tardía debería ser más agresivo
+            early_aggression = jnp.sum(early_strategy[3:6])
+            late_aggression = jnp.sum(late_strategy[3:6])
+            
+            if late_aggression > early_aggression + 0.05:
+                return 25.0
+            elif late_aggression > early_aggression:
+                return 15.0
+            else:
+                return 0.0
+        return 0.0
+    
+    # Test 3: Suited vs Offsuit (20 puntos)
+    # ¿Valora más las manos suited?
+    def test_suited_awareness():
+        # KQ suited vs KQ offsuit
+        suited_info = compute_mock_info_set(hole_ranks=[11, 10], is_suited=True, position=3)
+        offsuit_info = compute_mock_info_set(hole_ranks=[11, 10], is_suited=False, position=3)
+        
+        if suited_info < config.max_info_sets and offsuit_info < config.max_info_sets:
+            suited_strategy = strategy[suited_info]
+            offsuit_strategy = strategy[offsuit_info]
+            
+            # Suited debería ser ligeramente más agresivo
+            suited_aggression = jnp.sum(suited_strategy[3:6])
+            offsuit_aggression = jnp.sum(offsuit_strategy[3:6])
+            
+            if suited_aggression > offsuit_aggression + 0.03:
+                return 20.0
+            elif suited_aggression > offsuit_aggression:
+                return 10.0
+            else:
+                return 0.0
+        return 0.0
+    
+    # Test 4: Fold Discipline (15 puntos)
+    # ¿Foldea manos muy malas?
+    def test_fold_discipline():
+        # Manos muy malas deberían foldear más
+        bad_hands = [
+            compute_mock_info_set([2, 5], False, 1),  # 3-6 offsuit
+            compute_mock_info_set([1, 7], False, 2),  # 2-8 offsuit
+            compute_mock_info_set([0, 9], False, 0),  # 2-10 offsuit
+        ]
+        
+        total_fold_rate = 0.0
+        valid_hands = 0
+        
+        for bad_hand_info in bad_hands:
+            if bad_hand_info < config.max_info_sets:
+                fold_prob = strategy[bad_hand_info][0]  # Acción FOLD
+                total_fold_rate += fold_prob
+                valid_hands += 1
+        
+        if valid_hands > 0:
+            avg_fold_rate = total_fold_rate / valid_hands
+            # Debería foldear al menos 40% del tiempo con manos muy malas
+            if avg_fold_rate > 0.4:
+                return 15.0
+            elif avg_fold_rate > 0.2:
+                return 8.0
+            else:
+                return 0.0
+        return 0.0
+    
+    # Test 5: Strategy Diversity (15 puntos)
+    # ¿Tiene estrategias diversas o siempre hace lo mismo?
+    def test_strategy_diversity():
+        # Revisar si usa todas las acciones apropiadamente
+        total_strategy = jnp.sum(strategy, axis=0)
+        
+        # Verificar que no haya una acción dominante excesiva
+        max_action_prob = jnp.max(total_strategy)
+        total_prob = jnp.sum(total_strategy)
+        
+        if total_prob > 0:
+            dominance = max_action_prob / total_prob
+            # Estrategia balanceada: ninguna acción > 60% del total
+            if dominance < 0.4:
+                return 15.0
+            elif dominance < 0.6:
+                return 10.0
+            else:
+                return 0.0
+        return 0.0
+    
+    # Ejecutar todos los tests
+    scores = [
+        test_hand_strength(),
+        test_position_awareness(), 
+        test_suited_awareness(),
+        test_fold_discipline(),
+        test_strategy_diversity()
+    ]
+    
+    total_score = jnp.sum(jnp.array(scores))
+    
+    return {
+        'total_poker_iq': float(total_score),
+        'hand_strength_score': float(scores[0]),
+        'position_score': float(scores[1]), 
+        'suited_score': float(scores[2]),
+        'fold_discipline_score': float(scores[3]),
+        'diversity_score': float(scores[4])
+    }
+
+def compute_mock_info_set(hole_ranks, is_suited, position):
+    """
+    Computa un info set simplificado para testing.
+    Similar a compute_advanced_info_set pero más simple.
+    """
+    # Hand bucketing simplificado
+    high_rank = max(hole_ranks)
+    low_rank = min(hole_ranks)
+    is_pair = (hole_ranks[0] == hole_ranks[1])
+    
+    if is_pair:
+        hand_bucket = high_rank  # 0-12 para pairs
+    elif is_suited:
+        hand_bucket = 13 + high_rank * 12 + low_rank  # 13-168 para suited
+    else:
+        hand_bucket = 169 + high_rank * 12 + low_rank  # 169+ para offsuit
+    
+    hand_bucket = hand_bucket % 169  # Normalizar a 0-168
+    
+    # Info set simplificado
+    info_set_id = (
+        0 * 10000 +           # Street (preflop)
+        hand_bucket * 50 +    # Hand strength
+        position * 8 +        # Position
+        0                     # Otros factores en 0
+    )
+    
+    return info_set_id % 50000
+
 # ---------- Trainer ----------
 class PokerTrainer:
     def __init__(self, config: TrainerConfig):
@@ -344,6 +524,9 @@ class PokerTrainer:
         max_action_prob = float(jnp.max(self.strategy))
         min_action_prob = float(jnp.min(self.strategy))
         
+        # NUEVO: Evaluación objetiva de poker intelligence
+        poker_iq = evaluate_poker_intelligence(self.strategy, self.config)
+        
         logger.info(f"\n{'='*60}")
         logger.info(f"📊 REPORTE DE PROGRESO - Iteración {self.iteration}/{total_iterations}")
         logger.info(f"{'='*60}")
@@ -359,6 +542,27 @@ class PokerTrainer:
         logger.info(f"   - Entropía: {strategy_entropy:.4f}")
         logger.info(f"   - Prob máxima: {max_action_prob:.4f}")
         logger.info(f"   - Prob mínima: {min_action_prob:.6f}")
+        logger.info(f"\n🧠 POKER INTELLIGENCE (Objetivo):")
+        logger.info(f"   - 🎯 POKER IQ TOTAL: {poker_iq['total_poker_iq']:.1f}/100")
+        logger.info(f"   - 💪 Fuerza de manos: {poker_iq['hand_strength_score']:.1f}/25")
+        logger.info(f"   - 📍 Conciencia posicional: {poker_iq['position_score']:.1f}/25") 
+        logger.info(f"   - 🃏 Suited vs Offsuit: {poker_iq['suited_score']:.1f}/20")
+        logger.info(f"   - 🚫 Disciplina de fold: {poker_iq['fold_discipline_score']:.1f}/15")
+        logger.info(f"   - 🎭 Diversidad estratégica: {poker_iq['diversity_score']:.1f}/15")
+        
+        # Interpretación del IQ score
+        if poker_iq['total_poker_iq'] >= 80:
+            iq_level = "🏆 EXPERTO - Bot muy inteligente"
+        elif poker_iq['total_poker_iq'] >= 60:
+            iq_level = "🥇 AVANZADO - Entiende bien el poker"
+        elif poker_iq['total_poker_iq'] >= 40:
+            iq_level = "🥈 INTERMEDIO - Aprendiendo conceptos"
+        elif poker_iq['total_poker_iq'] >= 20:
+            iq_level = "🥉 PRINCIPIANTE - Conceptos básicos"
+        else:
+            iq_level = "🤖 NOVATO - Aún aprendiendo"
+            
+        logger.info(f"   - 📊 Nivel: {iq_level}")
         logger.info(f"{'='*60}\n")
 
     def save_model(self, path: str):
@@ -392,6 +596,3 @@ class PokerTrainer:
         logger.info(f"   Iteración: {self.iteration}")
         logger.info(f"   Shape regrets: {self.regrets.shape}")
         logger.info(f"   Shape strategy: {self.strategy.shape}")
-
-# Importamos time si no está importado
-import time
