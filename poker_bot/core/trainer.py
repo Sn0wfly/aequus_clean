@@ -197,17 +197,20 @@ def _jitted_train_step(regrets, strategy, key):
                     # Usar evaluación más sofisticada basada en el motor elite
                     base_value = payoff[player_idx]
                     
-                    # Factor de acción más realista
-                    if a == action:
-                        action_factor = 1.0
-                    else:
-                        # Penalizar acciones no tomadas basándose en su tipo
-                        if a == 0:  # FOLD
-                            action_factor = 0.2
-                        elif a == 1 or a == 2:  # CHECK/CALL
-                            action_factor = 0.6
-                        else:  # BET/RAISE/ALL_IN
-                            action_factor = 0.4
+                    # Factor de acción más realista usando lax.cond para JAX compatibility
+                    action_factor = lax.cond(
+                        a == action,
+                        lambda: 1.0,
+                        lambda: lax.cond(
+                            a == 0,  # FOLD
+                            lambda: 0.2,
+                            lambda: lax.cond(
+                                (a == 1) | (a == 2),  # CHECK/CALL
+                                lambda: 0.6,
+                                lambda: 0.4  # BET/RAISE/ALL_IN
+                            )
+                        )
+                    )
                     
                     return base_value * action_factor
                 
