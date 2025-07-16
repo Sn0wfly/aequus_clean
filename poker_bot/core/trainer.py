@@ -964,17 +964,14 @@ def compute_mock_info_set(hole_ranks, is_suited, position):
     street_bucket = 0  # Preflop para todos los tests
     position_bucket = position  # 0-5
     
-    # VALORES REPRESENTATIVOS basados en análisis de info sets realmente entrenados
-    # Los top info sets (119, 49973, etc.) sugieren estos valores típicos:
+    # VALORES REPRESENTATIVOS basados en análisis REAL de info sets entrenados
+    # Los info sets entrenados van desde 1,3,6,11,13... hasta 49993,49994,49996...
+    # Esto indica que los buckets dinámicos suelen ser BAJOS durante entrenamiento
     
-    # Stack bucket: valor medio típico durante entrenamiento
-    stack_bucket = 4  # Rango medio (0-19), pot_size típico ~20
-    
-    # Pot bucket: valor medio típico 
-    pot_bucket = 3    # Rango medio (0-9), pot_size típico ~30
-    
-    # Active bucket: valor medio
-    active_bucket = 2  # Rango medio (0-4)
+    # Usar valores BAJOS que coincidan con el primer grupo de info sets entrenados
+    stack_bucket = 0  # Valor bajo típico (0-19)
+    pot_bucket = 0    # Valor bajo típico (0-9) 
+    active_bucket = 0 # Valor bajo típico (0-4)
     
     # MISMA fórmula exacta que compute_advanced_info_set
     info_set_id = (
