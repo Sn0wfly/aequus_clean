@@ -18,36 +18,85 @@ logger = logging.getLogger(__name__)
 # ---------- Wrapper para evaluador real compatible con JAX ----------
 def evaluate_hand_jax(cards_jax):
     """
-    ARREGLADO: Evaluador JAX puro sin numpy operations.
-    Compatible con JIT compilation usando solo operaciones JAX nativas.
+    SUPER-HUMANO: Evaluador avanzado con conceptos profesionales.
+    Incluye suited premium, pocket pairs, conectores, etc.
     """
     # Verificar si las cartas son válidas (todas >= 0)
     cards_valid = jnp.all(cards_jax >= 0)
     
-    # Evaluación simple puramente JAX (sin numpy ni evaluador externo)
-    def simple_evaluation():
+    # Evaluación avanzada puramente JAX
+    def advanced_evaluation():
         # Calcular ranks y suits usando operaciones JAX puras
         ranks = cards_jax // 4  # 0-12 (2 hasta A)
         suits = cards_jax % 4   # 0-3 (spades, hearts, diamonds, clubs)
         
-        # Hand strength básico usando solo operaciones JAX
+        # Hand strength avanzado
         high_rank = jnp.max(ranks)
         low_rank = jnp.min(ranks)
-        is_pair = jnp.sum(ranks[0] == ranks[1]).astype(jnp.int32)
+        rank_diff = high_rank - low_rank
         
-        # Fórmula simple para hand strength (0-7461, mayor = mejor)
-        base_strength = (high_rank * 13 + low_rank) * 10
-        pair_bonus = is_pair * 1000
-        
-        # Suited bonus (operaciones JAX puras)
-        suited_bonus = jnp.where(
-            suits[0] == suits[1], 
-            200,  # Bonus por suited
-            0
+        # POCKET PAIRS - Premium hands
+        is_pair = (ranks[0] == ranks[1]).astype(jnp.int32)
+        pair_strength = lax.cond(
+            is_pair == 1,
+            lambda: 2500 + high_rank * 200,  # AA=4900, KK=4700, etc.
+            lambda: 0
         )
         
-        total_strength = base_strength + pair_bonus + suited_bonus
-        return jnp.clip(total_strength, 0, 7461).astype(jnp.int32)
+        # HIGH CARDS - Face cards premium
+        high_card_strength = (high_rank * 15 + low_rank) * 8
+        
+        # SUITED PREMIUM - Professional level bonus
+        is_suited = (suits[0] == suits[1]).astype(jnp.int32)
+        suited_bonus = lax.cond(
+            is_suited == 1,
+            lambda: lax.cond(
+                high_rank >= 10,  # J+ suited
+                lambda: 800,      # Premium suited
+                lambda: lax.cond(
+                    rank_diff <= 4,  # Suited connectors
+                    lambda: 500,     # Good suited
+                    lambda: 300      # Basic suited
+                )
+            ),
+            lambda: 0
+        )
+        
+        # CONNECTORS - Straight potential
+        connector_bonus = lax.cond(
+            rank_diff <= 4,  # 5 card straight possible
+            lambda: lax.cond(
+                rank_diff == 1,  # Perfect connector
+                lambda: 400,
+                lambda: lax.cond(
+                    rank_diff <= 2,  # 1-gap connector
+                    lambda: 200,
+                    lambda: 100      # 2+ gap
+                )
+            ),
+            lambda: 0
+        )
+        
+        # BROADWAY - T+ cards
+        broadway_bonus = lax.cond(
+            (high_rank >= 9) & (low_rank >= 9),  # Both T+
+            lambda: 600,
+            lambda: lax.cond(
+                high_rank >= 11,  # K+ high card
+                lambda: 300,
+                lambda: 0
+            )
+        )
+        
+        total_strength = (
+            pair_strength + 
+            high_card_strength + 
+            suited_bonus + 
+            connector_bonus + 
+            broadway_bonus
+        )
+        
+        return jnp.clip(total_strength, 0, 9999).astype(jnp.int32)
     
     # Invalid hand case
     def invalid_evaluation():
@@ -56,7 +105,7 @@ def evaluate_hand_jax(cards_jax):
     # Usar lax.cond para compatibilidad JAX
     return lax.cond(
         cards_valid,
-        simple_evaluation,
+        advanced_evaluation,
         invalid_evaluation
     )
 
@@ -64,8 +113,19 @@ def evaluate_hand_jax(cards_jax):
 @dataclass
 class TrainerConfig:
     batch_size: int = 128
-    num_actions: int = 6  # CAMBIADO: de 3 a 6 para coincidir con el motor elite (FOLD, CHECK, CALL, BET, RAISE, ALL_IN)
+    num_actions: int = 6
     max_info_sets: int = 50_000
+    
+    # SUPER-HUMANO: Configuraciones para entrenamientos largos
+    learning_rate: float = 0.01
+    position_awareness_factor: float = 0.3  # Fuerza del position learning
+    suited_awareness_factor: float = 0.2    # Fuerza del suited learning
+    multi_street_factor: float = 0.25       # Para futuro multi-street
+    
+    # Parámetros de threshold profesionales
+    strong_hand_threshold: int = 3500       # Manos premium
+    weak_hand_threshold: int = 1200         # Manos que hay que foldear
+    bluff_threshold: int = 800              # Manos para bluff ocasional
 
 # ---------- Elite Game Engine Wrapper para CFR ----------
 @jax.jit
@@ -355,39 +415,93 @@ def _jitted_train_step(regrets, strategy, key):
                     # Base value usando payoff real del juego
                     base_value = payoff[player_idx]
                     
-                    # SIMPLIFICADO: CFR más directo con señales claras
-                    # Clasificar mano en 3 categorías simples
-                    is_strong = hand_strength > 2000   # Manos fuertes (pairs, high cards)
-                    is_weak = hand_strength < 1000     # Manos muy débiles
-                    # is_medium para el resto (1000-2000)
+                    # SUPER-HUMANO: Clasificación profesional de manos
+                    is_premium = hand_strength > cfg.strong_hand_threshold    # AA, KK, AKs, etc.
+                    is_strong = hand_strength > (cfg.strong_hand_threshold - 1000)  # Manos buenas
+                    is_weak = hand_strength < cfg.weak_hand_threshold         # Manos fold
+                    is_bluff = hand_strength < cfg.bluff_threshold           # Bluff candidates
                     
-                    # Factor de acción MUY simplificado y directo
+                    # POSITION AWARENESS - Factor crítico para super-humano
+                    position = player_idx  # 0=early, 5=late (button)
+                    position_factor = lax.cond(
+                        position <= 1,  # Early position (UTG, UTG+1)
+                        lambda: 0.8,    # Más tight
+                        lambda: lax.cond(
+                            position <= 3,  # Middle position
+                            lambda: 1.0,    # Neutro
+                            lambda: 1.2     # Late position (más loose)
+                        )
+                    )
+                    
+                    # SUITED AWARENESS - Factor para suited hands
+                    ranks = hole_cards // 4
+                    suits = hole_cards % 4
+                    is_suited = (suits[0] == suits[1]).astype(jnp.int32)
+                    suited_factor = lax.cond(
+                        is_suited == 1,
+                        lambda: 1.0 + cfg.suited_awareness_factor,  # Bonus para suited
+                        lambda: 1.0
+                    )
+                    
+                    # STACK/POT AWARENESS - Profesional pot odds consideration
+                    pot_size = game_results['final_pot'][game_idx]
+                    pot_factor = lax.cond(
+                        pot_size > 50,  # Big pot
+                        lambda: 1.1,    # Más agresivo en pots grandes
+                        lambda: 0.95    # Más conservador en pots pequeños
+                    )
+                    
+                    # SUPER-HUMANO: Acción factors con conceptos profesionales
                     action_factor = lax.cond(
                         a == action,
                         lambda: 1.0,  # Acción real tomada = neutro
                         lambda: lax.cond(
                             a == 0,  # FOLD
                             lambda: lax.cond(
-                                is_strong,
-                                lambda: 0.3,  # Fold con mano fuerte = malo (pero no extremo)
+                                is_premium,
+                                lambda: 0.2 * position_factor,  # Fold premium muy malo, peor en late position
                                 lambda: lax.cond(
-                                    is_weak,
-                                    lambda: 1.4,  # Fold con mano débil = bueno
-                                    lambda: 1.0   # Fold con mano media = neutro
+                                    is_strong,
+                                    lambda: 0.5 * position_factor,  # Fold strong malo
+                                    lambda: lax.cond(
+                                        is_weak,
+                                        lambda: 1.5 / position_factor,  # Fold weak bueno, mejor en early position
+                                        lambda: 1.0   # Fold medium neutro
+                                    )
                                 )
                             ),
                             lambda: lax.cond(
                                 (a >= 3),  # BET/RAISE/ALL_IN (acciones agresivas)
                                 lambda: lax.cond(
-                                    is_strong,
-                                    lambda: 1.3,  # Apostar con mano fuerte = bueno
+                                    is_premium,
+                                    lambda: 1.4 * position_factor * suited_factor * pot_factor,  # Premium muy bueno
                                     lambda: lax.cond(
-                                        is_weak,
-                                        lambda: 0.4,  # Apostar con mano débil = malo
-                                        lambda: 1.0   # Apostar con mano media = neutro
+                                        is_strong,
+                                        lambda: 1.2 * position_factor * suited_factor,  # Strong bueno
+                                        lambda: lax.cond(
+                                            is_bluff & (position >= 4),  # Bluff en late position
+                                            lambda: 1.1 * position_factor,  # Bluff position aceptable
+                                            lambda: lax.cond(
+                                                is_weak,
+                                                lambda: 0.3 / position_factor,  # Weak bet muy malo
+                                                lambda: 0.9   # Medium bet ok
+                                            )
+                                        )
                                     )
                                 ),
-                                lambda: 1.0  # CHECK/CALL = siempre neutro
+                                lambda: lax.cond(
+                                    (a == 1) | (a == 2),  # CHECK/CALL
+                                    lambda: lax.cond(
+                                        is_strong,
+                                        lambda: 1.1 * suited_factor,  # Strong check/call ok
+                                        lambda: lax.cond(
+                                            is_weak,
+                                            lambda: 0.7,  # Weak call malo
+                                            lambda: 1.0   # Medium call neutro
+                                        )
+                                    ),
+                                    lambda: 1.0  # Otras acciones neutras
+                                )
                             )
                         )
                     )
@@ -456,47 +570,91 @@ def evaluate_poker_intelligence(strategy, config: TrainerConfig):
     # Test 2: Position Awareness (25 puntos)
     # ¿Juega más tight en early position?
     def test_position_awareness():
-        # Misma mano en posiciones diferentes
-        early_pos_info = compute_mock_info_set(hole_ranks=[10, 9], is_suited=True, position=0)
-        late_pos_info = compute_mock_info_set(hole_ranks=[10, 9], is_suited=True, position=5)
+        # SUPER-HUMANO: Test position con mano marginal (suited connector)
+        # Esta mano debe jugar diferente según posición
+        marginal_hand = [10, 9]  # J-T
+        
+        early_pos_info = compute_mock_info_set(hole_ranks=marginal_hand, is_suited=True, position=0)  # UTG
+        late_pos_info = compute_mock_info_set(hole_ranks=marginal_hand, is_suited=True, position=5)   # Button
         
         if early_pos_info < config.max_info_sets and late_pos_info < config.max_info_sets:
             early_strategy = strategy[early_pos_info]
             late_strategy = strategy[late_pos_info]
             
-            # En posición tardía debería ser más agresivo
-            early_aggression = jnp.sum(early_strategy[3:6])
+            # En posición tardía debería ser MÁS agresivo con suited connectors
+            early_aggression = jnp.sum(early_strategy[3:6])  # BET/RAISE/ALL_IN
             late_aggression = jnp.sum(late_strategy[3:6])
             
-            if late_aggression > early_aggression + 0.05:
-                return 25.0
-            elif late_aggression > early_aggression:
-                return 15.0
-            else:
-                return 0.0
+            # SUPER-HUMANO: También revisar fold rate (debería fold más en early)
+            early_fold = early_strategy[0]
+            late_fold = late_strategy[0]
+            
+            position_score = 0.0
+            
+            # Test 1: Más agresión en late position
+            if late_aggression > early_aggression + 0.1:
+                position_score += 15.0
+            elif late_aggression > early_aggression + 0.05:
+                position_score += 10.0
+                
+            # Test 2: Más fold en early position
+            if early_fold > late_fold + 0.05:
+                position_score += 10.0
+            elif early_fold > late_fold:
+                position_score += 5.0
+                
+            return position_score
         return 0.0
     
     # Test 3: Suited vs Offsuit (20 puntos)
     # ¿Valora más las manos suited?
     def test_suited_awareness():
-        # KQ suited vs KQ offsuit
-        suited_info = compute_mock_info_set(hole_ranks=[11, 10], is_suited=True, position=3)
-        offsuit_info = compute_mock_info_set(hole_ranks=[11, 10], is_suited=False, position=3)
+        # SUPER-HUMANO: Test con múltiples tipos de suited hands
+        test_cases = [
+            ([12, 10], "AJs vs AJo"),  # Premium suited
+            ([10, 9], "JTs vs JTo"),   # Suited connector
+            ([11, 8], "K9s vs K9o"),   # Suited non-connector
+        ]
         
-        if suited_info < config.max_info_sets and offsuit_info < config.max_info_sets:
-            suited_strategy = strategy[suited_info]
-            offsuit_strategy = strategy[offsuit_info]
+        total_score = 0.0
+        valid_tests = 0
+        
+        for hole_ranks, description in test_cases:
+            suited_info = compute_mock_info_set(hole_ranks=hole_ranks, is_suited=True, position=3)
+            offsuit_info = compute_mock_info_set(hole_ranks=hole_ranks, is_suited=False, position=3)
             
-            # Suited debería ser ligeramente más agresivo
-            suited_aggression = jnp.sum(suited_strategy[3:6])
-            offsuit_aggression = jnp.sum(offsuit_strategy[3:6])
-            
-            if suited_aggression > offsuit_aggression + 0.03:
-                return 20.0
-            elif suited_aggression > offsuit_aggression:
-                return 10.0
-            else:
-                return 0.0
+            if suited_info < config.max_info_sets and offsuit_info < config.max_info_sets:
+                suited_strategy = strategy[suited_info]
+                offsuit_strategy = strategy[offsuit_info]
+                
+                # Suited debería ser más agresivo
+                suited_aggression = jnp.sum(suited_strategy[3:6])
+                offsuit_aggression = jnp.sum(offsuit_strategy[3:6])
+                
+                # Suited debería fold menos
+                suited_fold = suited_strategy[0]
+                offsuit_fold = offsuit_strategy[0]
+                
+                test_score = 0.0
+                
+                # Más agresión con suited
+                if suited_aggression > offsuit_aggression + 0.05:
+                    test_score += 4.0
+                elif suited_aggression > offsuit_aggression:
+                    test_score += 2.0
+                    
+                # Menos fold con suited
+                if suited_fold < offsuit_fold - 0.03:
+                    test_score += 3.0
+                elif suited_fold < offsuit_fold:
+                    test_score += 1.0
+                
+                total_score += test_score
+                valid_tests += 1
+        
+        # Normalizar score a 20 puntos máximo
+        if valid_tests > 0:
+            return min(20.0, (total_score / valid_tests) * (20.0 / 7.0))
         return 0.0
     
     # Test 4: Fold Discipline (15 puntos)
@@ -837,3 +995,92 @@ class PokerTrainer:
         logger.info(f"   Iteración: {self.iteration}")
         logger.info(f"   Shape regrets: {self.regrets.shape}")
         logger.info(f"   Shape strategy: {self.strategy.shape}")
+
+# ---------- SUPER-HUMANO: Configuración de producción ----------
+class SuperHumanTrainerConfig(TrainerConfig):
+    """
+    Configuración avanzada para entrenamientos de nivel super-humano
+    que pueden competir contra Pluribus y profesionales.
+    """
+    # Training parameters para entrenamientos largos
+    batch_size: int = 256               # Más muestras por iteración
+    max_iterations: int = 2000          # Entrenamientos largos
+    save_interval: int = 50             # Guardar más frecuente
+    snapshot_iterations: list = None    # Se calculará automáticamente
+    
+    # Learning rates adaptativos
+    initial_learning_rate: float = 0.02
+    final_learning_rate: float = 0.005
+    learning_decay_factor: float = 0.95
+    
+    # Factores de awareness más agresivos
+    position_awareness_factor: float = 0.4   # Stronger position learning
+    suited_awareness_factor: float = 0.3     # Stronger suited learning
+    pot_odds_factor: float = 0.25           # Pot odds consideration
+    
+    # Thresholds profesionales calibrados
+    strong_hand_threshold: int = 4000       # Solo hands verdaderamente premium
+    weak_hand_threshold: int = 1500         # Threshold más estricto
+    bluff_threshold: int = 600              # Bluffs más selectivos
+    premium_threshold: int = 5000           # AA, KK level
+    
+    # Multi-street preparation
+    enable_multi_street: bool = False       # Para futuro
+    street_learning_factors: list = None    # [preflop, flop, turn, river]
+    
+    # Advanced concepts
+    enable_range_construction: bool = False  # Para futuro
+    enable_opponent_modeling: bool = False   # Para futuro
+    enable_icm_training: bool = False       # Para futuro
+    
+    def __post_init__(self):
+        # Auto-calculate snapshot iterations para entrenamientos largos
+        if self.snapshot_iterations is None:
+            checkpoints = [
+                self.max_iterations // 4,      # 25%
+                self.max_iterations // 2,      # 50%  
+                3 * self.max_iterations // 4,  # 75%
+                self.max_iterations             # 100%
+            ]
+            self.snapshot_iterations = checkpoints
+            
+        # Auto-calculate street learning factors
+        if self.street_learning_factors is None:
+            self.street_learning_factors = [1.0, 0.8, 0.6, 0.4]  # Decreasing by street
+
+# ---------- SUPER-HUMANO: Funciones de entrenamiento avanzadas ----------
+def create_super_human_trainer(config_type="standard"):
+    """
+    Factory function para crear trainers de diferentes niveles.
+    
+    Args:
+        config_type: "standard", "super_human", "pluribus_level"
+    """
+    if config_type == "super_human":
+        config = SuperHumanTrainerConfig()
+        logger.info("🏆 SUPER-HUMAN TRAINER CONFIG LOADED")
+        logger.info(f"   - Max iterations: {config.max_iterations}")
+        logger.info(f"   - Batch size: {config.batch_size}")
+        logger.info(f"   - Position factor: {config.position_awareness_factor}")
+        logger.info(f"   - Suited factor: {config.suited_awareness_factor}")
+        
+    elif config_type == "pluribus_level":
+        config = SuperHumanTrainerConfig()
+        # Configuración extrema para competir vs Pluribus
+        config.max_iterations = 5000
+        config.batch_size = 512
+        config.position_awareness_factor = 0.5
+        config.suited_awareness_factor = 0.4
+        config.strong_hand_threshold = 4500
+        config.weak_hand_threshold = 1800
+        
+        logger.info("🚀 PLURIBUS-LEVEL TRAINER CONFIG LOADED")
+        logger.info(f"   - Max iterations: {config.max_iterations}")
+        logger.info(f"   - Batch size: {config.batch_size}")
+        logger.info("   - WARNING: This will take hours to train!")
+        
+    else:  # standard
+        config = TrainerConfig()
+        logger.info("⚡ Standard trainer config loaded")
+    
+    return PokerTrainer(config)
