@@ -1038,12 +1038,17 @@ def validate_training_data_integrity(strategy, key, verbose=True):
     if verbose:
         logger.info("🧪 TEST 3: Verificando evaluación de hand strength...")
     
-    # Evaluar manos diferentes
-    aa_cards = jnp.array([51, 47], dtype=jnp.int8)  # As spades, As hearts
-    trash_cards = jnp.array([20, 0], dtype=jnp.int8)  # 7 clubs, 2 spades
+    # Evaluar manos COMPLETAS (hole + community cards - 7 cartas total)
+    # Board: Kh Qd Js 9c 8h (46, 42, 37, 35, 32) 
+    board = jnp.array([46, 42, 37, 35, 32], dtype=jnp.int8)
     
-    aa_strength = evaluate_hand_jax(aa_cards)
-    trash_strength = evaluate_hand_jax(trash_cards)
+    # AA + board = 7 cartas
+    aa_full = jnp.concatenate([jnp.array([51, 47], dtype=jnp.int8), board])  # As Ac + board
+    # 72o + board = 7 cartas  
+    trash_full = jnp.concatenate([jnp.array([23, 0], dtype=jnp.int8), board])  # 7c 2s + board
+    
+    aa_strength = evaluate_hand_jax(aa_full)
+    trash_strength = evaluate_hand_jax(trash_full)
     
     if aa_strength > trash_strength + 1000:  # Diferencia significativa
         validation_results['hand_strength_variation'] = True
