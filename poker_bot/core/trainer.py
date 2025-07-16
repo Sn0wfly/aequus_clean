@@ -424,6 +424,9 @@ class PokerTrainer:
         self.regrets  = jnp.zeros((config.max_info_sets, config.num_actions), dtype=jnp.float32)
         self.strategy = jnp.ones((config.max_info_sets, config.num_actions), dtype=jnp.float32) / config.num_actions
         
+        # NUEVO: Sistema de snapshots para tracking de evolución
+        self.poker_iq_snapshots = {}
+        
         logger.info("=" * 60)
         logger.info("🎯 PokerTrainer CFR-JIT inicializado")
         logger.info("=" * 60)
@@ -435,13 +438,22 @@ class PokerTrainer:
         logger.info(f"   - Shape strategy: {self.strategy.shape}")
         logger.info("=" * 60)
 
-    def train(self, num_iterations: int, save_path: str, save_interval: int):
+    def train(self, num_iterations: int, save_path: str, save_interval: int, snapshot_iterations=None):
         key = jax.random.PRNGKey(42)  # Semilla fija para reproducibilidad
+        
+        # Iteraciones para snapshots (por defecto: 1/3, 2/3, final)
+        if snapshot_iterations is None:
+            snapshot_iterations = [
+                max(1, num_iterations // 3),      # 33%
+                max(1, 2 * num_iterations // 3),  # 66%
+                num_iterations                    # 100%
+            ]
         
         logger.info("\n🚀 INICIANDO ENTRENAMIENTO CFR")
         logger.info(f"   Total iteraciones: {num_iterations}")
         logger.info(f"   Guardar cada: {save_interval} iteraciones")
         logger.info(f"   Path base: {save_path}")
+        logger.info(f"   Snapshots en: {snapshot_iterations}")
         logger.info("\n⏳ Compilando función JIT (primera iteración será más lenta)...\n")
         
         import time
@@ -466,12 +478,16 @@ class PokerTrainer:
                 
                 iter_time = time.time() - iter_start
                 
-                # Log simple cada iteración
-                logger.info(f"✓ Iteración {self.iteration} completada ({iter_time:.2f}s)")
-                
-                # Métricas detalladas periódicamente
+                # Log simple cada iteración (solo progreso básico)
                 if self.iteration % max(1, num_iterations // 10) == 0:
-                    self._log_detailed_metrics(num_iterations, start_time)
+                    progress = 100 * self.iteration / num_iterations
+                    logger.info(f"✓ Progreso: {progress:.0f}% ({self.iteration}/{num_iterations}) - {iter_time:.2f}s")
+                
+                # Tomar snapshots del Poker IQ en iteraciones específicas
+                if self.iteration in snapshot_iterations:
+                    poker_iq = evaluate_poker_intelligence(self.strategy, self.config)
+                    self.poker_iq_snapshots[self.iteration] = poker_iq
+                    logger.info(f"📸 Snapshot tomado en iteración {self.iteration} - IQ: {poker_iq['total_poker_iq']:.1f}/100")
                 
             except Exception as e:
                 logger.error(f"\n❌ ERROR en iteración {self.iteration}")
@@ -497,73 +513,79 @@ class PokerTrainer:
         final_path = f"{save_path}_final.pkl"
         self.save_model(final_path)
         
-        logger.info("\n" + "="*60)
-        logger.info("🎉 ENTRENAMIENTO COMPLETADO EXITOSAMENTE! 🎉")
-        logger.info("="*60)
-        logger.info(f"⏱️  Tiempo total: {total_time:.1f}s ({total_time/60:.1f} min)")
-        logger.info(f"📊 Iteraciones completadas: {self.iteration}")
-        logger.info(f"⚡ Velocidad promedio: {self.iteration/total_time:.1f} iter/s")
-        logger.info(f"💾 Modelo final guardado: {final_path}")
-        logger.info("="*60 + "\n")
+        # NUEVO: Reporte de evolución de inteligencia
+        self._log_poker_evolution_summary(num_iterations, total_time)
 
-    def _log_detailed_metrics(self, total_iterations, start_time):
-        """Log métricas detalladas del entrenamiento"""
-        elapsed = time.time() - start_time
+    def _log_poker_evolution_summary(self, total_iterations, total_time):
+        """Muestra un resumen de la evolución del Poker IQ"""
+        logger.info("\n" + "="*80)
+        logger.info("🧠 RESUMEN DE EVOLUCIÓN DE POKER INTELLIGENCE")
+        logger.info("="*80)
         
-        # Métricas de regret
-        avg_regret = float(jnp.mean(jnp.abs(self.regrets)))
-        max_regret = float(jnp.max(jnp.abs(self.regrets)))
-        min_regret = float(jnp.min(self.regrets))
-        non_zero_regrets = int(jnp.sum(jnp.any(self.regrets != 0, axis=1)))
+        if not self.poker_iq_snapshots:
+            logger.info("❌ No se tomaron snapshots de IQ durante el entrenamiento")
+            return
         
-        # Métricas de estrategia
-        eps = 1e-8
-        strategy_entropy = -float(jnp.mean(
-            jnp.sum(self.strategy * jnp.log(self.strategy + eps), axis=1)
-        ))
-        max_action_prob = float(jnp.max(self.strategy))
-        min_action_prob = float(jnp.min(self.strategy))
+        # Mostrar evolución
+        sorted_snapshots = sorted(self.poker_iq_snapshots.items())
         
-        # NUEVO: Evaluación objetiva de poker intelligence
-        poker_iq = evaluate_poker_intelligence(self.strategy, self.config)
+        logger.info("📈 EVOLUCIÓN DEL POKER IQ:")
         
-        logger.info(f"\n{'='*60}")
-        logger.info(f"📊 REPORTE DE PROGRESO - Iteración {self.iteration}/{total_iterations}")
-        logger.info(f"{'='*60}")
-        logger.info(f"⏱️  Tiempo transcurrido: {elapsed:.1f}s")
-        logger.info(f"⚡ Velocidad: {self.iteration/elapsed:.1f} iter/s")
-        logger.info(f"⏳ ETA: {(total_iterations-self.iteration)/(self.iteration/elapsed):.1f}s")
-        logger.info(f"\n📈 MÉTRICAS DE REGRET:")
-        logger.info(f"   - Promedio: {avg_regret:.6f}")
-        logger.info(f"   - Máximo: {max_regret:.6f}")
-        logger.info(f"   - Mínimo: {min_regret:.6f}")
-        logger.info(f"   - Info sets activos: {non_zero_regrets:,}/{self.config.max_info_sets:,} ({100*non_zero_regrets/self.config.max_info_sets:.1f}%)")
-        logger.info(f"\n🎲 MÉTRICAS DE ESTRATEGIA:")
-        logger.info(f"   - Entropía: {strategy_entropy:.4f}")
-        logger.info(f"   - Prob máxima: {max_action_prob:.4f}")
-        logger.info(f"   - Prob mínima: {min_action_prob:.6f}")
-        logger.info(f"\n🧠 POKER INTELLIGENCE (Objetivo):")
-        logger.info(f"   - 🎯 POKER IQ TOTAL: {poker_iq['total_poker_iq']:.1f}/100")
-        logger.info(f"   - 💪 Fuerza de manos: {poker_iq['hand_strength_score']:.1f}/25")
-        logger.info(f"   - 📍 Conciencia posicional: {poker_iq['position_score']:.1f}/25") 
-        logger.info(f"   - 🃏 Suited vs Offsuit: {poker_iq['suited_score']:.1f}/20")
-        logger.info(f"   - 🚫 Disciplina de fold: {poker_iq['fold_discipline_score']:.1f}/15")
-        logger.info(f"   - 🎭 Diversidad estratégica: {poker_iq['diversity_score']:.1f}/15")
-        
-        # Interpretación del IQ score
-        if poker_iq['total_poker_iq'] >= 80:
-            iq_level = "🏆 EXPERTO - Bot muy inteligente"
-        elif poker_iq['total_poker_iq'] >= 60:
-            iq_level = "🥇 AVANZADO - Entiende bien el poker"
-        elif poker_iq['total_poker_iq'] >= 40:
-            iq_level = "🥈 INTERMEDIO - Aprendiendo conceptos"
-        elif poker_iq['total_poker_iq'] >= 20:
-            iq_level = "🥉 PRINCIPIANTE - Conceptos básicos"
-        else:
-            iq_level = "🤖 NOVATO - Aún aprendiendo"
+        for iteration, iq_data in sorted_snapshots:
+            progress = 100 * iteration / total_iterations
+            level = self._get_iq_level(iq_data['total_poker_iq'])
             
-        logger.info(f"   - 📊 Nivel: {iq_level}")
-        logger.info(f"{'='*60}\n")
+            logger.info(f"\n🎯 Iteración {iteration} ({progress:.0f}%):")
+            logger.info(f"   - IQ Total: {iq_data['total_poker_iq']:.1f}/100 {level}")
+            logger.info(f"   - 💪 Fuerza manos: {iq_data['hand_strength_score']:.1f}/25")
+            logger.info(f"   - 📍 Posición: {iq_data['position_score']:.1f}/25")
+            logger.info(f"   - 🃏 Suited: {iq_data['suited_score']:.1f}/20")
+            logger.info(f"   - 🚫 Fold disc.: {iq_data['fold_discipline_score']:.1f}/15")
+            logger.info(f"   - 🎭 Diversidad: {iq_data['diversity_score']:.1f}/15")
+        
+        # Calcular mejoras
+        if len(sorted_snapshots) >= 2:
+            first_iq = sorted_snapshots[0][1]['total_poker_iq']
+            last_iq = sorted_snapshots[-1][1]['total_poker_iq']
+            improvement = last_iq - first_iq
+            
+            logger.info(f"\n📊 ANÁLISIS DE MEJORA:")
+            logger.info(f"   - IQ inicial: {first_iq:.1f}/100")
+            logger.info(f"   - IQ final: {last_iq:.1f}/100")
+            logger.info(f"   - Mejora total: +{improvement:.1f} puntos")
+            logger.info(f"   - Mejora por iteración: +{improvement/total_iterations:.2f} puntos")
+            
+            if improvement > 20:
+                verdict = "🏆 EXCELENTE - Aprendizaje muy efectivo"
+            elif improvement > 10:
+                verdict = "🥇 BUENO - Progreso sólido"
+            elif improvement > 5:
+                verdict = "🥈 MODERADO - Mejora detectada"
+            else:
+                verdict = "🤔 LENTO - Necesita más iteraciones"
+                
+            logger.info(f"   - Veredicto: {verdict}")
+        
+        # Stats finales
+        logger.info(f"\n⏱️ ESTADÍSTICAS FINALES:")
+        logger.info(f"   - Tiempo total: {total_time:.1f}s ({total_time/60:.1f} min)")
+        logger.info(f"   - Velocidad: {total_iterations/total_time:.1f} iter/s")
+        logger.info(f"   - Throughput: ~{total_iterations * 128 * 50 / total_time:.0f} hands/s")
+        
+        logger.info("="*80 + "\n")
+
+    def _get_iq_level(self, iq_score):
+        """Retorna el nivel de IQ como emoji"""
+        if iq_score >= 80:
+            return "🏆"
+        elif iq_score >= 60:
+            return "🥇"
+        elif iq_score >= 40:
+            return "🥈"
+        elif iq_score >= 20:
+            return "🥉"
+        else:
+            return "🤖"
 
     def save_model(self, path: str):
         """Guarda el modelo actual a disco"""
