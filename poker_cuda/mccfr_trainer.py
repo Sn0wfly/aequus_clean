@@ -97,6 +97,9 @@ class MCCFRTrainer:
     
     def setup_logging(self):
         """Setup comprehensive logging."""
+        # Ensure output directory exists
+        Path(self.config.output_dir).mkdir(exist_ok=True)
+        
         log_file = os.path.join(self.config.output_dir, "training.log")
         
         logging.basicConfig(

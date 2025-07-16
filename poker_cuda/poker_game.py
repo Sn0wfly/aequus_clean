@@ -37,6 +37,20 @@ class PokerCard:
     def to_int(self) -> int:
         """Convert card to integer representation for CUDA."""
         return self.rank * 4 + self.suit
+    
+    def __lt__(self, other):
+        """Less than comparison for sorting."""
+        if self.rank != other.rank:
+            return self.rank < other.rank
+        return self.suit < other.suit
+    
+    def __eq__(self, other):
+        """Equality comparison."""
+        return self.rank == other.rank and self.suit == other.suit
+    
+    def __hash__(self):
+        """Hash for use in sets/dicts."""
+        return hash((self.rank, self.suit))
 
 
 class PokerDeck:
