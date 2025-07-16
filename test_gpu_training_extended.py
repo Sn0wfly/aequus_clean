@@ -30,8 +30,7 @@ def test_extended_gpu_training():
     trainer.train(
         num_iterations=100,
         save_path="gpu_test_model",
-        save_interval=50,
-        snapshot_iterations=[]  # Sin evaluaciones para velocidad pura
+        save_interval=50
     )
     
     short_time = time.time() - start_time
@@ -66,8 +65,7 @@ def test_extended_gpu_training():
     trainer_2.train(
         num_iterations=500,
         save_path="gpu_test_model_500",
-        save_interval=250,
-        snapshot_iterations=[]  # Sin evaluaciones para velocidad pura
+        save_interval=250
     )
     
     medium_time = time.time() - start_time
@@ -142,7 +140,7 @@ if __name__ == "__main__":
     
     # Verificar que JAX detecta GPU
     print(f"🖥️  JAX devices: {jax.devices()}")
-    if 'gpu' in str(jax.devices()).lower():
+    if 'cuda' in str(jax.devices()).lower() or 'gpu' in str(jax.devices()).lower():
         print("✅ GPU detectada por JAX")
     else:
         print("⚠️ Solo CPU detectada")
