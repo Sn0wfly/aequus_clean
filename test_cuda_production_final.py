@@ -18,10 +18,41 @@ import sys
 import time
 import logging
 import os
+import ctypes
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
+
+def diagnose_library_symbols():
+    """Diagnose library symbol loading issues"""
+    try:
+        lib_path = "./poker_cuda/libpoker_cuda.so"
+        lib = ctypes.CDLL(lib_path)
+        
+        print("🔍 DIAGNOSING LIBRARY SYMBOLS...")
+        
+        # Test simple function first
+        try:
+            test_func = lib.cuda_test_function
+            test_func.restype = ctypes.c_int
+            result = test_func()
+            print(f"✅ cuda_test_function: {result}")
+        except AttributeError as e:
+            print(f"❌ cuda_test_function not found: {e}")
+        
+        # Test main function
+        try:
+            eval_func = lib.cuda_evaluate_single_hand_real
+            print("✅ cuda_evaluate_single_hand_real found")
+        except AttributeError as e:
+            print(f"❌ cuda_evaluate_single_hand_real not found: {e}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Library loading failed: {e}")
+        return False
 
 def test_cuda_production_system():
     """Complete test of production CUDA system"""
@@ -322,8 +353,70 @@ def show_production_deployment_guide():
     print("   # Benchmark vs alternatives:")
     print("   trainer.benchmark_vs_alternatives()")
 
+def test_library_symbols():
+    """Test individual symbol loading to diagnose library issues"""
+    try:
+        import ctypes
+        lib_path = "./poker_cuda/libpoker_cuda.so"
+        lib = ctypes.CDLL(lib_path)
+        
+        print("🔍 Testing individual symbol loading...")
+        
+        # Test simple function first
+        try:
+            test_func = lib.cuda_test_function
+            test_func.restype = ctypes.c_int
+            result = test_func()
+            print(f"✅ cuda_test_function: {result}")
+        except AttributeError as e:
+            print(f"❌ cuda_test_function not found: {e}")
+        
+        # Test main function
+        try:
+            eval_func = lib.cuda_evaluate_single_hand_real
+            eval_func.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+            eval_func.restype = ctypes.c_int
+            print("✅ cuda_evaluate_single_hand_real found")
+        except AttributeError as e:
+            print(f"❌ cuda_evaluate_single_hand_real not found: {e}")
+        
+        # Test other functions
+        functions_to_test = [
+            "cuda_evaluate_hands_batch_real_wrapper",
+            "cuda_validate_evaluator",
+            "run_cfr_iteration_advanced"
+        ]
+        
+        for func_name in functions_to_test:
+            try:
+                func = getattr(lib, func_name)
+                print(f"✅ {func_name} found")
+            except AttributeError:
+                print(f"❌ {func_name} not found")
+                
+        return True
+        
+    except Exception as e:
+        print(f"❌ Library loading failed: {e}")
+        return False
+
 if __name__ == "__main__":
-    print("Starting CUDA Production System test...\n")
+    print("Starting CUDA Production System test...")
+    print()
+    print("🚀 CUDA POKER CFR - FINAL PRODUCTION TEST")
+    print("="*70)
+    print()
+    
+    # TEST 0: Symbol diagnosis
+    print("🧪 TEST 0: Library Symbol Diagnosis")
+    if diagnose_library_symbols():
+        print("✅ Symbol test completed")
+    else:
+        print("❌ Symbol test failed")
+    print()
+    
+    # Continue with existing tests...
+    print("🧪 TEST 1: Production Library Check")
     
     success = test_cuda_production_system()
     

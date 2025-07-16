@@ -478,4 +478,9 @@ void cuda_validate_evaluator() {
     cudaDeviceSynchronize();
 }
 
+// Simple test function to verify library loading
+int cuda_test_function() {
+    return 42;
+}
+
 } // extern "C" 
