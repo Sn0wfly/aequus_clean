@@ -154,9 +154,12 @@ __device__ int compute_advanced_info_set_real(
     int high_rank = max(hole_ranks[0], hole_ranks[1]);
     int low_rank = min(hole_ranks[0], hole_ranks[1]);
     
-    // Preflop bucketing - uses Pluribus-style hand types
+    // Base hand strength bucket
+    int base_bucket;
+    
     if (num_community_cards == 0) {
-        int base_bucket = high_rank * 13 + low_rank;
+        // Preflop bucketing - uses Pluribus-style hand types
+        base_bucket = high_rank * 13 + low_rank;
         
         // Apply suited/pair bonuses
         if (is_pair) {
@@ -165,23 +168,15 @@ __device__ int compute_advanced_info_set_real(
             base_bucket += 50;  // Suited bonus
         }
         
-        return base_bucket % 169; // 169 preflop hand types
+        base_bucket = base_bucket % 169; // 169 preflop hand types
+    } else {
+        // Post-flop: Use hand strength buckets
+        float hand_strength_normalized = 0.5f;
+        base_bucket = compute_postflop_bucket(hole_cards, community_cards, num_community_cards, &hand_strength_normalized);
     }
     
     // Street bucketing (0=preflop, 1=flop, 2=turn, 3=river)
     int street_bucket = current_street;
-    
-    // Hand bucketing - different logic per street
-    int hand_bucket;
-    float hand_strength_normalized = 0.5f;
-    
-    if (current_street == 0) {
-        // Preflop: Use 169 canonical hand types
-        hand_bucket = compute_preflop_bucket(hole_ranks, hole_suits);
-    } else {
-        // Post-flop: Use hand strength buckets
-        hand_bucket = compute_postflop_bucket(hole_cards, community_cards, num_community_cards, &hand_strength_normalized);
-    }
     
     // Position bucketing (6 positions)
     int position_bucket = player_position;
@@ -189,21 +184,15 @@ __device__ int compute_advanced_info_set_real(
     // Pot size bucketing (20 buckets)
     int pot_bucket = min(19, (int)(pot_size / 5.0f));
     
-    // Stack depth bucketing (based on pot size as proxy)
-    int stack_bucket = min(19, (int)(pot_size / 3.0f));
-    
     // Active players bucketing (2-6 players)
     int active_bucket = min(4, num_active_players - 2);
     
-    // ADVANCED: Add betting round factor
-    int betting_round = current_street;
-    
-    // ADVANCED: Add position type (early/middle/late)
+    // Position type (early/middle/late)
     int position_type = (player_position < 2) ? 0 : (player_position < 4) ? 1 : 2;
     
     // Combine all factors with careful weight distribution
-    int final_bucket = (base_bucket * 5 + street_bucket * 3 + active_bucket * 2 + 
-                       position_type + betting_round) % MAX_INFO_SETS;
+    int final_bucket = (base_bucket * 7 + street_bucket * 5 + position_bucket * 3 + 
+                       pot_bucket * 2 + active_bucket + position_type) % MAX_INFO_SETS;
     
     return final_bucket;
 }
