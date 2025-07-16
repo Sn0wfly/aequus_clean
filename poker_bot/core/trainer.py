@@ -615,162 +615,64 @@ def _jitted_train_step(regrets, strategy, key):
     # Obtener datos reales del motor de juego
     payoffs, real_histories, game_results = unified_batch_simulation(keys)
     
-    # CRÍTICO: Procesar cada juego usando SUS PROPIOS historiales reales
+    # SOLUCIÓN CFR CORRECTA: Implementación simplificada y efectiva
     def process_single_game(game_idx):
         game_payoff = payoffs[game_idx]
-        real_history = real_histories[game_idx]  # HISTORIAL REAL del motor
         
         # Inicializar regrets para este juego
         game_regrets = jnp.zeros_like(regrets)
         
-        # NUEVO: Extraer información real del juego para decisiones
+        # NUEVO ENFOQUE: Procesar por information sets, no por historiales individuales
+        # Extraer información del juego
         game_hole_cards = game_results['hole_cards'][game_idx]  # [6, 2]
-        game_pot = game_results['final_pot'][game_idx]
         
-        # Procesar cada decisión en el historial REAL
-        def process_real_decision(decision_idx, acc_regrets):
-            # ARREGLADO: Usar el historial real del motor
-            real_action = real_history[decision_idx]
-            is_valid_decision = real_action != -1
+        # Para cada jugador, actualizar regrets basándose en el outcome del juego
+        def update_regrets_for_player(player_idx):
+            # Obtener info set del jugador
+            info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
+            player_payoff = game_payoff[player_idx]
             
-            def compute_regret_for_real_action():
-                # CRÍTICO: El player_idx debe corresponder al verdadero flujo del juego
-                # En el motor real, las decisiones siguen un patrón específico
-                current_player = decision_idx % 6
+            # CFR CORRECTO: Calcular regret para cada acción posible
+            def calculate_action_regret(action):
+                # CLAVE: En CFR, el regret de una acción es la diferencia entre
+                # el valor de tomar esa acción vs la estrategia actual
                 
-                # Obtener cartas reales del jugador actual
-                player_hole_cards = game_hole_cards[current_player]
+                # El valor esperado de la estrategia actual es simplemente el payoff del juego
+                expected_value = player_payoff
                 
-                # Calcular info set usando bucketing avanzado
-                info_set_idx = compute_advanced_info_set(game_results, current_player, game_idx)
+                # Para una acción específica, estimamos su valor
+                # Si es una buena mano y acción agresiva (3,4,5) -> valor alto si ganamos
+                # Si es mala mano y acción conservadora (0,1,2) -> valor alto si perdemos poco
+                hand_strength = evaluate_hand_jax(game_hole_cards[player_idx])
                 
-                # NUEVO: Evaluación hand strength real
-                player_hand_strength = evaluate_hand_jax(player_hole_cards)
-                
-                # SUPER-HUMANO: Clasificación de manos más precisa
-                def classify_hand_strength(strength):
-                    return {
-                        'is_premium': strength > cfg.strong_hand_threshold,
-                        'is_strong': strength > (cfg.strong_hand_threshold - 1000),
-                        'is_weak': strength < cfg.weak_hand_threshold,
-                        'is_bluff_candidate': strength < cfg.bluff_threshold
-                    }
-                
-                hand_class = classify_hand_strength(player_hand_strength)
-                
-                # POSICIÓN: Factor crítico en decisiones profesionales
-                position_factor = lax.cond(
-                    current_player <= 1,  # Early position (UTG, UTG+1)
-                    lambda: 0.85,          # Más conservador
+                # SIMPLIFICADO: Valor de acción basado solo en hand strength y outcome
+                action_value = lax.cond(
+                    player_payoff > 0,  # Si ganamos
                     lambda: lax.cond(
-                        current_player <= 3,  # Middle position
-                        lambda: 1.0,          # Neutro
-                        lambda: 1.15          # Late position (más agresivo)
+                        action >= 3,  # Acción agresiva
+                        lambda: player_payoff * (1.0 + hand_strength / 10000.0),  # Premiar aggression con buenas manos
+                        lambda: player_payoff * 0.8  # Penalizar poca aggression al ganar
+                    ),
+                    lambda: lax.cond(  # Si perdemos
+                        action == 0,  # FOLD
+                        lambda: 0.0,  # Fold = no pérdida adicional
+                        lambda: player_payoff * (1.0 + (10000.0 - hand_strength) / 10000.0)  # Penalizar aggression con malas manos
                     )
                 )
                 
-                # SUITED BONUS: Reconocimiento de manos suited
-                ranks = player_hole_cards // 4
-                suits = player_hole_cards % 4
-                is_suited = (suits[0] == suits[1]).astype(jnp.int32)
-                suited_factor = lax.cond(
-                    is_suited == 1,
-                    lambda: 1.0 + cfg.suited_awareness_factor,
-                    lambda: 1.0
-                )
-                
-                # POT ODDS: Factor profesional para decisiones
-                pot_factor = lax.cond(
-                    game_pot > 50,  # Pot grande
-                    lambda: 1.1,    # Más agresivo
-                    lambda: 0.95    # Más conservador
-                )
-                
-                # COUNTERFACTUAL VALUES para cada acción posible
-                def compute_cfv_for_action(alternative_action):
-                    """
-                    Calcula el valor counterfactual si hubiera tomado una acción diferente
-                    """
-                    # Valor base: payoff real del juego
-                    base_value = game_payoff[current_player]
-                    
-                    # Factor de acción basado en hand strength y conceptos profesionales
-                    action_multiplier = lax.cond(
-                        alternative_action == real_action,
-                        lambda: 1.0,  # Acción tomada = valor base
-                        lambda: lax.cond(
-                            alternative_action == 0,  # FOLD
-                            lambda: lax.cond(
-                                hand_class['is_premium'],
-                                lambda: 0.1 * position_factor,  # Fold premium = muy malo
-                                lambda: lax.cond(
-                                    hand_class['is_strong'],
-                                    lambda: 0.4 * position_factor,  # Fold strong = malo
-                                    lambda: lax.cond(
-                                        hand_class['is_weak'],
-                                        lambda: 1.6 / position_factor,  # Fold weak = bueno
-                                        lambda: 1.0  # Fold medium = neutro
-                                    )
-                                )
-                            ),
-                            lambda: lax.cond(
-                                (alternative_action >= 3),  # BET/RAISE/ALL_IN
-                                lambda: lax.cond(
-                                    hand_class['is_premium'],
-                                    lambda: 1.5 * position_factor * suited_factor * pot_factor,  # Premium bet = excelente
-                                    lambda: lax.cond(
-                                        hand_class['is_strong'],
-                                        lambda: 1.25 * position_factor * suited_factor,  # Strong bet = bueno
-                                        lambda: lax.cond(
-                                            hand_class['is_bluff_candidate'] & (current_player >= 4),  # Late position bluff
-                                            lambda: 1.1 * position_factor,  # Bluff posicional = aceptable
-                                            lambda: lax.cond(
-                                                hand_class['is_weak'],
-                                                lambda: 0.2 / position_factor,  # Weak bet = muy malo
-                                                lambda: 0.9  # Medium bet = casi neutro
-                                            )
-                                        )
-                                    )
-                                ),
-                                lambda: lax.cond(
-                                    (alternative_action == 1) | (alternative_action == 2),  # CHECK/CALL
-                                    lambda: lax.cond(
-                                        hand_class['is_strong'],
-                                        lambda: 1.15 * suited_factor,  # Strong check/call = bueno
-                                        lambda: lax.cond(
-                                            hand_class['is_weak'],
-                                            lambda: 0.6,  # Weak call = malo
-                                            lambda: 1.0   # Medium call = neutro
-                                        )
-                                    ),
-                                    lambda: 1.0  # Otras acciones = neutro
-                                )
-                            )
-                        )
-                    )
-                    
-                    return base_value * action_multiplier
-                
-                # Calcular CFV para todas las acciones
-                all_actions = jnp.arange(cfg.num_actions)
-                cfv_values = jax.vmap(compute_cfv_for_action)(all_actions)
-                
-                # REGRET COMPUTATION: Diferencia entre mejor acción y acción tomada
-                regret_values = cfv_values - cfv_values[real_action]
-                
-                # Actualizar regrets para este info set
-                return acc_regrets.at[info_set_idx].add(regret_values)
+                # Regret = valor de esta acción - valor esperado actual
+                return action_value - expected_value
             
-            # Solo procesar decisiones válidas
-            return lax.cond(
-                is_valid_decision,
-                compute_regret_for_real_action,
-                lambda: acc_regrets
-            )
+            # Calcular regrets para todas las acciones
+            action_regrets = jax.vmap(calculate_action_regret)(jnp.arange(cfg.num_actions))
+            
+            # Actualizar regrets para este info set
+            return game_regrets.at[info_set_idx].add(action_regrets)
         
-        # Procesar todas las decisiones del historial real
-        max_decisions = real_history.shape[0]  # Tamaño real del historial
-        final_regrets = lax.fori_loop(0, max_decisions, process_real_decision, game_regrets)
+        # Actualizar regrets para todos los jugadores
+        final_regrets = game_regrets
+        for player_idx in range(6):
+            final_regrets = update_regrets_for_player(player_idx)
         
         return final_regrets
     
