@@ -158,77 +158,78 @@ def compute_advanced_info_set(game_results, player_idx, game_idx):
 # ---------- DIAGNÓSTICO DETALLADO PARA DEBUG ----------
 def debug_info_set_distribution(strategy, game_results, num_samples=1000):
     """
-    Analiza la distribución de info sets y estrategias para debugging.
-    Permite entender por qué no está aprendiendo conceptos básicos.
+    SIMPLIFICADO: Analiza la distribución de info sets sin trabarse.
+    Versión ligera para evitar cuelgues durante el entrenamiento.
     """
-    logger.info("\n🔍 INICIANDO DIAGNÓSTICO DETALLADO DE INFO SETS")
-    logger.info("="*60)
+    logger.info("\n🔍 DIAGNÓSTICO SIMPLIFICADO DE INFO SETS")
+    logger.info("="*50)
     
-    # Contadores para análisis
-    info_set_counts = {}
-    strategy_samples = {}
-    
-    # Generar muestras de info sets para análisis
-    for game_idx in range(min(num_samples, 100)):  # Limitar para evitar overflow
-        for player_idx in range(6):
-            try:
-                info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
-                info_set_idx_py = int(info_set_idx)  # Convertir a Python int
-                
-                if info_set_idx_py not in info_set_counts:
-                    info_set_counts[info_set_idx_py] = 0
-                    strategy_samples[info_set_idx_py] = strategy[info_set_idx_py].copy()
-                
-                info_set_counts[info_set_idx_py] += 1
-                
-            except Exception as e:
-                logger.warning(f"Error en info set debug game={game_idx}, player={player_idx}: {e}")
-    
-    # Análisis de distribución
-    total_unique_info_sets = len(info_set_counts)
-    total_accesses = sum(info_set_counts.values())
-    
-    logger.info(f"📊 DISTRIBUCIÓN DE INFO SETS:")
-    logger.info(f"   - Info sets únicos generados: {total_unique_info_sets}")
-    logger.info(f"   - Total accesos: {total_accesses}")
-    logger.info(f"   - Densidad de uso: {total_accesses/max(1, total_unique_info_sets):.2f} accesos/info_set")
-    
-    # Análisis de estrategias más comunes
-    most_common = sorted(info_set_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    logger.info(f"\n🎯 TOP 10 INFO SETS MÁS FRECUENTES:")
-    for i, (info_set_idx, count) in enumerate(most_common):
-        strategy_vec = strategy_samples[info_set_idx]
-        aggression = float(jnp.sum(strategy_vec[3:6]))  # BET/RAISE/ALL_IN
-        fold_prob = float(strategy_vec[0])  # FOLD
+    try:
+        # Limitar mucho el análisis para evitar cuelgues
+        sample_size = min(10, num_samples)  # REDUCIDO: solo 10 juegos
+        info_set_samples = []
+        strategy_samples = []
         
-        logger.info(f"   {i+1:2d}. Info set {info_set_idx:5d}: {count:3d} accesos")
-        logger.info(f"       Fold: {fold_prob:.3f}, Aggression: {aggression:.3f}")
-        logger.info(f"       Strategy: {[f'{x:.3f}' for x in strategy_vec]}")
-    
-    # Verificar si las estrategias son todas iguales (problema común)
-    unique_strategies = set()
-    for strat in strategy_samples.values():
-        strat_tuple = tuple(f"{x:.6f}" for x in strat)
-        unique_strategies.add(strat_tuple)
-    
-    logger.info(f"\n🎭 DIVERSIDAD DE ESTRATEGIAS:")
-    logger.info(f"   - Estrategias únicas: {len(unique_strategies)}")
-    logger.info(f"   - Info sets únicos: {len(strategy_samples)}")
-    
-    if len(unique_strategies) == 1:
-        logger.warning("⚠️  PROBLEMA DETECTADO: Todas las estrategias son idénticas!")
-        logger.warning("    El CFR no está diferenciando entre situaciones.")
-    elif len(unique_strategies) < len(strategy_samples) * 0.1:
-        logger.warning("⚠️  PROBLEMA DETECTADO: Muy poca diversidad de estrategias!")
-        logger.warning(f"    Solo {len(unique_strategies)} estrategias para {len(strategy_samples)} info sets.")
-    
-    return {
-        'unique_info_sets': total_unique_info_sets,
-        'unique_strategies': len(unique_strategies),
-        'total_accesses': total_accesses,
-        'most_common': most_common[:5]
-    }
+        # Muestreo muy limitado
+        for game_idx in range(sample_size):
+            for player_idx in [0, 2, 4]:  # Solo 3 jugadores por juego
+                try:
+                    info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
+                    info_set_idx_py = int(info_set_idx)
+                    
+                    if info_set_idx_py < strategy.shape[0]:  # Verificar bounds
+                        info_set_samples.append(info_set_idx_py)
+                        strategy_samples.append(strategy[info_set_idx_py])
+                    
+                except Exception as e:
+                    logger.warning(f"Error en sample {game_idx}-{player_idx}: {str(e)[:50]}")
+                    continue
+        
+        if not info_set_samples:
+            logger.warning("⚠️ No se pudieron generar muestras de info sets")
+            return {'unique_info_sets': 0, 'unique_strategies': 0, 'total_accesses': 0}
+        
+        # Análisis básico
+        unique_info_sets = len(set(info_set_samples))
+        total_samples = len(info_set_samples)
+        
+        logger.info(f"📊 MUESTREO LIMITADO ({total_samples} muestras):")
+        logger.info(f"   - Info sets únicos: {unique_info_sets}")
+        logger.info(f"   - Total muestras: {total_samples}")
+        logger.info(f"   - Diversidad: {unique_info_sets/max(1, total_samples):.2f}")
+        
+        # Análisis de estrategias (simplificado)
+        if strategy_samples:
+            # Verificar si las primeras estrategias son diferentes
+            first_strategy = strategy_samples[0]
+            unique_strategies = 1
+            
+            for i in range(1, min(5, len(strategy_samples))):  # Solo comparar primeras 5
+                if not jnp.allclose(first_strategy, strategy_samples[i], atol=1e-4):
+                    unique_strategies += 1
+                    break
+            
+            aggression_avg = float(jnp.mean(jnp.array([jnp.sum(s[3:6]) for s in strategy_samples[:5]])))
+            fold_avg = float(jnp.mean(jnp.array([s[0] for s in strategy_samples[:5]])))
+            
+            logger.info(f"🎯 ESTRATEGIAS MUESTREADAS:")
+            logger.info(f"   - Estrategias diferentes detectadas: {unique_strategies}")
+            logger.info(f"   - Aggression promedio: {aggression_avg:.3f}")
+            logger.info(f"   - Fold rate promedio: {fold_avg:.3f}")
+            
+            # Quick check si todas son iguales
+            if unique_strategies == 1 and len(strategy_samples) > 1:
+                logger.warning("⚠️ POSIBLE PROBLEMA: Estrategias muy similares detectadas")
+        
+        return {
+            'unique_info_sets': unique_info_sets,
+            'unique_strategies': unique_strategies if strategy_samples else 0,
+            'total_accesses': total_samples
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error en diagnóstico: {str(e)[:100]}")
+        return {'unique_info_sets': -1, 'unique_strategies': -1, 'total_accesses': -1}
 
 def debug_specific_hands():
     """
