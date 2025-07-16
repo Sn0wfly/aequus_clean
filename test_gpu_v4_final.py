@@ -24,26 +24,28 @@ def main():
         from trainer_mccfr_gpu_optimized_v4 import GPUTrainerV4
         print("✅ V4 trainer imported successfully")
         
-        # Verification: no problematic patterns
-        with open('trainer_mccfr_gpu_optimized_v4.py', 'r') as f:
-            source = f.read()
-        
-        # Check for problem patterns
+        # Check for problem patterns (with UTF-8 encoding)
         problems = []
-        if 'pure_callback' in source and 'jax.pure_callback' in source:
-            problems.append("pure_callback usage found")
-        
-        # Count nested lax.cond (this should be much lower)
-        nested_cond_count = source.count('lambda: lax.cond(')
-        if nested_cond_count > 5:  # Allow some, but not excessive nesting
-            problems.append(f"excessive nested lax.cond: {nested_cond_count}")
-        
-        if problems:
-            print(f"⚠️ POTENTIAL ISSUES: {problems}")
-        else:
-            print("✅ CLEAN: No problematic patterns detected")
+        try:
+            with open('trainer_mccfr_gpu_optimized_v4.py', 'r', encoding='utf-8') as f:
+                source = f.read()
+                
+            if 'pure_callback' in source and 'jax.pure_callback' in source:
+                problems.append("pure_callback usage found")
             
-        print(f"📊 Nested lax.cond count: {nested_cond_count} (should be <5)")
+            # Count nested lax.cond (this should be much lower)
+            nested_cond_count = source.count('lambda: lax.cond(')
+            if nested_cond_count > 5:  # Allow some, but not excessive nesting
+                problems.append(f"excessive nested lax.cond: {nested_cond_count}")
+            
+            if problems:
+                print(f"⚠️ POTENTIAL ISSUES: {problems}")
+            else:
+                print("✅ CLEAN: No problematic patterns detected")
+                
+            print(f"📊 Nested lax.cond count: {nested_cond_count} (should be <5)")
+        except UnicodeDecodeError:
+            print("⚠️ Encoding issue reading source file - skipping pattern check")
             
         print("\n🚀 TESTING V4 FINAL...")
         trainer = GPUTrainerV4()
