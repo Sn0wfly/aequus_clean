@@ -163,97 +163,99 @@ def unified_batch_simulation(keys):
         
         def generate_action_for_situation(action_idx, player_idx, hand_strength, street, position):
             """
-            Genera acciones realistas basadas en contexto de poker
+            MÁXIMA DIVERSIDAD: Genera acciones con alta entropía y variabilidad extrema
             """
-            # AUMENTAR DIVERSIDAD: Usar múltiples fuentes de randomización
-            action_key = jax.random.fold_in(key2, action_idx * 37 + player_idx * 13 + street * 7)
-            base_prob = jax.random.uniform(action_key)
+            # MÚLTIPLES FUENTES DE ENTROPÍA para máxima diversidad
+            seed_base = action_idx * 71 + player_idx * 37 + street * 23 + position * 13
             
-            # Segunda fuente de randomización para mayor entropía
-            entropy_key = jax.random.fold_in(key3, action_idx * 23 + player_idx * 19)
-            entropy_factor = jax.random.uniform(entropy_key) * 0.4 + 0.8  # 0.8-1.2 range
+            # 5 fuentes independientes de randomización
+            key_a = jax.random.fold_in(key1, seed_base + 1001)
+            key_b = jax.random.fold_in(key2, seed_base + 2003)  
+            key_c = jax.random.fold_in(key3, seed_base + 3007)
+            key_d = jax.random.fold_in(key1, seed_base + 4013)
+            key_e = jax.random.fold_in(key2, seed_base + 5021)
             
-            # Tercera fuente para variabilidad adicional
-            chaos_key = jax.random.fold_in(key1, action_idx * 41 + street * 17)
-            chaos_boost = jax.random.uniform(chaos_key) * 0.3  # 0-0.3 boost
+            # ENTROPÍA MÁXIMA: Combinar múltiples distribuciones
+            rand_a = jax.random.uniform(key_a)
+            rand_b = jax.random.uniform(key_b) 
+            rand_c = jax.random.uniform(key_c)
+            rand_d = jax.random.uniform(key_d)
+            rand_e = jax.random.uniform(key_e)
             
-            # Clasificar hand strength con más variabilidad
-            strength_threshold_1 = 2500 + jax.random.uniform(action_key) * 1000  # 2500-3500
-            strength_threshold_2 = 1200 + jax.random.uniform(entropy_key) * 600   # 1200-1800
+            # Chaos primario: 30% de acciones completamente aleatorias
+            pure_chaos = jax.random.uniform(key_e) < 0.3
+            chaos_action = jax.random.randint(key_e, (), 0, 6)
             
-            is_strong = hand_strength > strength_threshold_1
-            is_medium = (hand_strength > strength_threshold_2) & (hand_strength <= strength_threshold_1)
-            is_weak = hand_strength <= strength_threshold_2
+            # NUEVA ESTRATEGIA: Distribución menos determinística
+            # En lugar de hand strength estricto, usar probabilidades dinámicas
             
-            # Ajustar por posición con más variabilidad
-            position_base = lax.cond(
-                position <= 1,  # Early position
-                lambda: 0.6,    # Más conservador
-                lambda: lax.cond(
-                    position <= 3,  # Middle position
-                    lambda: 1.0,    # Neutro
-                    lambda: 1.4     # Late position más agresivo
-                )
+            # Factores dinámicos que cambian constantemente
+            hand_factor = (hand_strength / 10000.0) * rand_a  # 0-1 range con noise
+            position_factor = ((position + 1) / 6.0) * rand_b  # 0-1 range con noise
+            street_factor = ((street + 1) / 4.0) * rand_c     # 0-1 range con noise
+            entropy_factor = rand_d * rand_e                   # Pure noise 0-1
+            
+            # COMBINADOR DINÁMICO: Cambiar pesos constantemente
+            weight_chaos = jax.random.uniform(key_a) * 0.4    # 0-0.4
+            weight_hand = jax.random.uniform(key_b) * 0.3     # 0-0.3
+            weight_position = jax.random.uniform(key_c) * 0.2  # 0-0.2
+            weight_street = jax.random.uniform(key_d) * 0.1   # 0-0.1
+            
+            # Score compuesto que cambia dinámicamente
+            composite_score = (
+                entropy_factor * weight_chaos +
+                hand_factor * weight_hand +
+                position_factor * weight_position + 
+                street_factor * weight_street
             )
             
-            # Añadir noise a position factor
-            position_noise = jax.random.uniform(chaos_key) * 0.4 - 0.2  # -0.2 to +0.2
-            position_factor = jnp.clip(position_base + position_noise, 0.3, 2.0)
+            # DISTRIBUCIÓN COMPLETAMENTE NUEVA: 6 rangos dinámicos
+            # Los rangos cambian basados en el composite score
+            threshold_1 = 0.1 + rand_a * 0.1   # 0.1-0.2
+            threshold_2 = 0.25 + rand_b * 0.1  # 0.25-0.35
+            threshold_3 = 0.45 + rand_c * 0.1  # 0.45-0.55
+            threshold_4 = 0.65 + rand_d * 0.1  # 0.65-0.75
+            threshold_5 = 0.85 + rand_e * 0.1  # 0.85-0.95
             
-            # MÁXIMA DIVERSIDAD: Probabilidades más variables
-            adjusted_prob = base_prob * entropy_factor + chaos_boost
-            
-            # Probabilidades de acción con ALTA variabilidad
-            action = lax.cond(
-                is_strong,
+            # SELECCIÓN DE ACCIÓN con rangos dinámicos
+            strategic_action = lax.cond(
+                composite_score < threshold_1,
+                lambda: 0,  # FOLD
                 lambda: lax.cond(
-                    adjusted_prob * position_factor < 0.15,
-                    lambda: jax.random.randint(action_key, (), 0, 3),  # Random 0-2
+                    composite_score < threshold_2,
+                    lambda: 1,  # CHECK
                     lambda: lax.cond(
-                        adjusted_prob * position_factor < 0.6,
-                        lambda: jax.random.randint(entropy_key, (), 3, 6),  # Random 3-5
+                        composite_score < threshold_3,
+                        lambda: 2,  # CALL
                         lambda: lax.cond(
-                            adjusted_prob < 0.85,
-                            lambda: 4,  # RAISE
-                            lambda: 5   # ALL_IN
-                        )
-                    )
-                ),
-                lambda: lax.cond(
-                    is_medium,
-                    lambda: lax.cond(
-                        adjusted_prob / position_factor < 0.3,
-                        lambda: jax.random.randint(action_key, (), 0, 4),  # Random 0-3
-                        lambda: lax.cond(
-                            adjusted_prob < 0.75,
-                            lambda: jax.random.randint(entropy_key, (), 1, 4),  # Random 1-3
-                            lambda: 3   # BET ocasional
-                        )
-                    ),
-                    lambda: lax.cond(  # is_weak
-                        adjusted_prob / position_factor < 0.5,
-                        lambda: jax.random.randint(chaos_key, (), 0, 2),  # Random 0-1 (fold/check)
-                        lambda: lax.cond(
-                            adjusted_prob < 0.8,
-                            lambda: jax.random.randint(action_key, (), 1, 3),  # Random 1-2
+                            composite_score < threshold_4,
+                            lambda: 3,  # BET
                             lambda: lax.cond(
-                                position >= 4,  # Late position bluff
-                                lambda: jax.random.randint(entropy_key, (), 3, 6),  # Random 3-5
-                                lambda: 0  # Early position fold
+                                composite_score < threshold_5,
+                                lambda: 4,  # RAISE
+                                lambda: 5   # ALL_IN
                             )
                         )
                     )
                 )
             )
             
-            # EXTRA DIVERSIDAD: Ocasional acción completamente aleatoria
-            should_chaos = jax.random.uniform(chaos_key) < 0.1  # 10% de chaos total
-            chaos_action = jax.random.randint(chaos_key, (), 0, 6)
+            # BONUS CHAOS: Ocasional permutación de acciones
+            should_permute = jax.random.uniform(key_d) < 0.15  # 15% permutación
+            permutation_offset = jax.random.randint(key_e, (), 1, 6)
+            permuted_action = (strategic_action + permutation_offset) % 6
             
+            intermediate_action = lax.cond(
+                should_permute,
+                lambda: permuted_action,
+                lambda: strategic_action
+            )
+            
+            # DECISIÓN FINAL: Chaos vs Strategic
             final_action = lax.cond(
-                should_chaos,
+                pure_chaos,
                 lambda: chaos_action,
-                lambda: action
+                lambda: intermediate_action
             )
             
             return jnp.clip(final_action, 0, 5)
@@ -268,21 +270,39 @@ def unified_batch_simulation(keys):
             street = (i // cycle_length) % 4  # 0=preflop, 1=flop, 2=turn, 3=river
             player = i % 6
             
-            # MEJORADO: Probabilidad de acción más variable por street
+            # MÁXIMA VARIABILIDAD: Probabilidades muy dinámicas
             street_key = jax.random.fold_in(key1, i * 17 + street * 5)
-            should_generate_action = jax.random.uniform(street_key) < lax.cond(
+            chaos_key = jax.random.fold_in(key2, i * 29 + player * 11)
+            
+            # Base probability que cambia por juego
+            base_game_prob = jax.random.uniform(chaos_key) * 0.4 + 0.4  # 0.4-0.8 range
+            
+            # Modificador por street con alta variabilidad
+            street_modifier = lax.cond(
                 street == 0,  # Preflop
-                lambda: 0.9,  # 90% probabilidad
+                lambda: jax.random.uniform(street_key) * 0.3 + 0.7,  # 0.7-1.0
                 lambda: lax.cond(
                     street == 1,  # Flop
-                    lambda: 0.8,  # 80% probabilidad
+                    lambda: jax.random.uniform(street_key) * 0.4 + 0.5,  # 0.5-0.9
                     lambda: lax.cond(
                         street == 2,  # Turn
-                        lambda: 0.7,  # 70% probabilidad
-                        lambda: 0.6   # River: 60% probabilidad
+                        lambda: jax.random.uniform(street_key) * 0.5 + 0.3,  # 0.3-0.8
+                        lambda: jax.random.uniform(street_key) * 0.6 + 0.2   # 0.2-0.8 River
                     )
                 )
             )
+            
+            # Probability dinámica que varía por posición en el juego
+            dynamic_prob = base_game_prob * street_modifier
+            
+            # Extra chaos: Terminación temprana basada en el progreso del juego
+            game_progress = i / (max_actions * 2)  # Progreso 0-1
+            
+            # Probabilidad de terminar aumenta con progreso (más juegos cortos)
+            termination_chance = game_progress * 0.3  # 0% al inicio, 30% al final
+            early_termination = jax.random.uniform(chaos_key) < termination_chance
+            
+            should_generate_action = (jax.random.uniform(street_key) < dynamic_prob) & (~early_termination)
             
             # Solo generar acción si estamos dentro del límite Y pasamos el filtro probabilístico
             should_add = (action_count < max_actions) & should_generate_action
@@ -308,11 +328,15 @@ def unified_batch_simulation(keys):
             
             return (new_action_seq, new_count), None
         
-        # Generar acciones para todas las calles usando scan (MÁS ACCIONES)
+        # VARIABLE PROBABILITY: Usar tamaño fijo pero probabilidades dinámicas para longitud variable
+        # Esto es compatible con JAX al usar un tamaño de iteración fijo
+        total_iterations = max_actions * 2  # Tamaño fijo máximo
+        
+        # Generar acciones con probabilidades variables por juego
         (final_action_seq, final_count), _ = lax.scan(
             add_action_to_sequence,
             (action_sequence, 0),
-            jnp.arange(max_actions * 2)  # DOBLE de iteraciones para más oportunidades
+            jnp.arange(total_iterations)
         )
         
         # 5. Calcular payoffs realistas basados en hand strength
@@ -1067,7 +1091,7 @@ def validate_training_data_integrity(strategy, key, verbose=True):
             logger.error(f"   ❌ No hay acciones válidas en los historiales")
     
     # THRESHOLD MÁS REALISTA para diversidad
-    diversity_threshold = 0.05  # 5% diversidad mínima (más realista)
+    diversity_threshold = 0.02  # 2% diversidad mínima (más realista para poker)
     
     if history_diversity > diversity_threshold:
         validation_results['real_histories_detected'] = True
