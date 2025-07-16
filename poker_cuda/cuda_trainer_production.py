@@ -107,43 +107,63 @@ class ProductionCUDAPokerCFR:
         self._setup_function_signatures()
     
     def _setup_function_signatures(self):
-        """Setup all CUDA function signatures"""
+        """Setup all CUDA function signatures with error handling"""
         
-        # Real hand evaluator
-        self.cuda_lib.cuda_evaluate_single_hand_real.argtypes = [
-            ctypes.POINTER(ctypes.c_int), ctypes.c_int
-        ]
-        self.cuda_lib.cuda_evaluate_single_hand_real.restype = ctypes.c_int
+        try:
+            # Real hand evaluator - verificar que existe primero
+            if hasattr(self.cuda_lib, 'cuda_evaluate_single_hand_real'):
+                self.cuda_lib.cuda_evaluate_single_hand_real.argtypes = [
+                    ctypes.POINTER(ctypes.c_int), ctypes.c_int
+                ]
+                self.cuda_lib.cuda_evaluate_single_hand_real.restype = ctypes.c_int
+                logger.info("✅ cuda_evaluate_single_hand_real configured")
+            else:
+                logger.error("❌ cuda_evaluate_single_hand_real not found in library")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to configure cuda_evaluate_single_hand_real: {e}")
         
-        # Advanced CFR training step
-        self.cuda_lib.cuda_cfr_train_step_advanced.argtypes = [
-            ctypes.c_void_p,  # d_regrets
-            ctypes.c_void_p,  # d_strategy
-            ctypes.c_void_p,  # d_rand_states
-            ctypes.c_void_p,  # d_hole_cards
-            ctypes.c_void_p,  # d_community_cards
-            ctypes.c_void_p,  # d_payoffs
-            ctypes.c_void_p,  # d_action_histories
-            ctypes.c_void_p,  # d_pot_sizes
-            ctypes.c_void_p,  # d_num_actions
-            ctypes.c_int      # batch_size
-        ]
-        self.cuda_lib.cuda_cfr_train_step_advanced.restype = None
-        
-        # Memory management
-        self.cuda_lib.cuda_init_cfr_trainer_advanced.argtypes = [
-            ctypes.POINTER(ctypes.c_void_p) * 9,  # All device pointers
-            ctypes.c_int,  # batch_size
-            ctypes.c_ulonglong  # seed
-        ]
-        
-        # Poker IQ evaluation
-        self.cuda_lib.cuda_evaluate_poker_iq.argtypes = [
-            ctypes.c_void_p,  # d_strategy
-            ctypes.POINTER(ctypes.c_float * 6),  # results array
-            ctypes.c_int      # max_info_sets
-        ]
-        self.cuda_lib.cuda_evaluate_poker_iq.restype = None
+        try:
+            # Advanced CFR training step
+            if hasattr(self.cuda_lib, 'cuda_cfr_train_step_advanced'):
+                self.cuda_lib.cuda_cfr_train_step_advanced.argtypes = [
+                    ctypes.c_void_p,  # d_regrets
+                    ctypes.c_void_p,  # d_strategy  
+                    ctypes.c_void_p,  # d_hole_cards
+                    ctypes.c_void_p,  # d_community_cards
+                    ctypes.c_void_p,  # d_payoffs
+                    ctypes.c_int,     # batch_size
+                    ctypes.c_float    # learning_rate
+                ]
+                self.cuda_lib.cuda_cfr_train_step_advanced.restype = None
+                logger.info("✅ cuda_cfr_train_step_advanced configured")
+            else:
+                logger.warning("⚠️ cuda_cfr_train_step_advanced not found (optional)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to configure cuda_cfr_train_step_advanced: {e}")
+            
+        try:
+            # Game simulation batch
+            if hasattr(self.cuda_lib, 'cuda_simulate_games_batch_advanced'):
+                self.cuda_lib.cuda_simulate_games_batch_advanced.argtypes = [
+                    ctypes.c_void_p,  # d_hole_cards_out
+                    ctypes.c_void_p,  # d_community_cards_out 
+                    ctypes.c_void_p,  # d_payoffs_out
+                    ctypes.c_void_p,  # d_action_histories_out
+                    ctypes.c_int      # batch_size
+                ]
+                self.cuda_lib.cuda_simulate_games_batch_advanced.restype = None
+                logger.info("✅ cuda_simulate_games_batch_advanced configured")
+            else:
+                logger.warning("⚠️ cuda_simulate_games_batch_advanced not found (optional)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to configure cuda_simulate_games_batch_advanced: {e}")
+            
+        # Verificación final
+        if not hasattr(self.cuda_lib, 'cuda_evaluate_single_hand_real'):
+            raise RuntimeError("❌ Critical function cuda_evaluate_single_hand_real not available")
     
     def _init_gpu_memory(self):
         """Initialize all GPU memory for advanced CFR"""
