@@ -57,69 +57,60 @@ def _jitted_train_step(regrets: Array, strategy: Array, batch_size: int, num_act
     def process_game(batch_idx):
         payoff = payoffs[batch_idx]
         history = histories[batch_idx]
-        
-        # Usar longitud fija en lugar de max_step dinámico
+
         def process_step(carry, step_idx):
             regrets, strategy = carry
-            
-            # Verificar si este paso es válido
-            is_valid = (step_idx < fge.MAX_GAME_LENGTH) & (history[step_idx] != -1)
-            
+            action = history[step_idx]
+            is_valid = action != -1
+
             def do_process():
-                # Reconstruir estado hasta este paso
-                state = reconstruct_state(batch_idx, step_idx)
-                action = history[step_idx]
-                player_idx = state.cur_player[0]
-                
-                # Calcular counterfactual values para todas las acciones
-                legal_actions = fge.get_legal_actions(state)
-                
-                def calc_action_value(action_idx):
+                state = fge.initial_state_for_idx(batch_idx)
+                # Reconstruir hasta step_idx
+                def step_fn(state, act):
                     return lax.cond(
-                        legal_actions[action_idx],
-                        lambda: action_value(state, action_idx, player_idx, payoff),
+                        act != -1,
+                        lambda s: fge.step(s, act),
+                        lambda s: s,
+                        state
+                    )
+                state = lax.fori_loop(
+                    0, step_idx + 1,
+                    lambda i, s: step_fn(s, history[i]),
+                    state
+                )
+
+                player_idx = state.cur_player[0]
+                legal_actions = fge.get_legal_actions(state)
+
+                def cfv(a):
+                    return lax.cond(
+                        legal_actions[a],
+                        lambda: payoff[player_idx],
                         lambda: 0.0
                     )
-                
-                action_values = jax.vmap(calc_action_value)(jnp.arange(num_actions))
-                
-                # Calcular regrets usando Regret-Matching
-                played_value = action_values[action]
-                regrets_delta = jnp.where(
-                    legal_actions,
-                    action_values - played_value,
-                    0.0
-                )
-                
-                # Actualizar regrets para este info set (usando player_idx como hash simple)
+
+                cfv_all = jax.vmap(cfv)(jnp.arange(num_actions))
+                regret_delta = cfv_all - cfv_all[action]
+
                 info_set_idx = player_idx % max_info_sets
-                new_regrets = regrets.at[info_set_idx].add(regrets_delta)
-                
-                # Actualizar estrategia usando Regret-Matching
-                positive_regrets = jnp.maximum(new_regrets[info_set_idx], 0.0)
-                sum_pos_regrets = jnp.sum(positive_regrets)
-                new_strategy_probs = jnp.where(
-                    sum_pos_regrets > 0,
-                    positive_regrets / sum_pos_regrets,
-                    jnp.ones(num_actions) / num_actions
-                )
-                new_strategy = strategy.at[info_set_idx].set(new_strategy_probs)
-                
+                new_regrets = regrets.at[info_set_idx].add(regret_delta)
+                pos = jnp.maximum(new_regrets[info_set_idx], 0.0)
+                norm = jnp.sum(pos)
+                new_strat = jnp.where(norm > 0, pos / norm, jnp.ones(num_actions) / num_actions)
+                new_strategy = strategy.at[info_set_idx].set(new_strat)
                 return new_regrets, new_strategy
-            
-            def skip_process():
+
+            def skip():
                 return regrets, strategy
-            
-            return lax.cond(is_valid, do_process, skip_process)
-        
-        # Procesar todos los pasos del juego con longitud fija
-        final_regrets, final_strategy = lax.scan(
+
+            return lax.cond(is_valid, do_process, skip)
+
+        # Escaneo sobre longitud fija
+        return lax.scan(
             process_step,
             (regrets, strategy),
             jnp.arange(fge.MAX_GAME_LENGTH)
         )[0]
-        
-        return final_regrets, final_strategy
     
     # 5. Procesar todos los juegos del batch
     def process_batch(carry, batch_idx):
