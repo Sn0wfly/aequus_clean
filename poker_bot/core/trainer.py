@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TrainerConfig:
     batch_size: int = 128
-    num_actions: int = 3
+    num_actions: int = 3  # Cambiado de 14 a 3 para coincidir con el motor
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step ----------
@@ -29,6 +29,11 @@ def _jitted_train_step(regrets, strategy, key):
     3. Actualiza regrets y estrategia
     """
     cfg = TrainerConfig()  # valores constantes dentro del jit
+    
+    # Verificar shapes
+    assert regrets.shape == (cfg.max_info_sets, cfg.num_actions), f"Expected ({cfg.max_info_sets}, {cfg.num_actions}), got {regrets.shape}"
+    assert strategy.shape == (cfg.max_info_sets, cfg.num_actions), f"Expected ({cfg.max_info_sets}, {cfg.num_actions}), got {strategy.shape}"
+    
     keys = jax.random.split(key, cfg.batch_size)
     payoffs, histories = fge.batch_play(keys)
 
@@ -62,7 +67,7 @@ def _jitted_train_step(regrets, strategy, key):
                 cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
                 regret_delta = cfv_all - cfv_all[action]
 
-                info_set_idx = jnp.mod(player_idx.astype(jnp.int64), cfg.max_info_sets)
+                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
                 new_regrets = regrets.at[info_set_idx].add(regret_delta)
                 pos = jnp.maximum(new_regrets[info_set_idx], 0.0)
                 norm = jnp.sum(pos)
