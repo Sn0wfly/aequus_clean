@@ -15,97 +15,41 @@ from jax import ShapeDtypeStruct
 
 logger = logging.getLogger(__name__)
 
-# ---------- Wrapper para evaluador real compatible con JAX ----------
+# ---------- FIXED: Real Hand Evaluator for Training ----------
 def evaluate_hand_jax(cards_jax):
     """
-    SUPER-HUMANO: Evaluador avanzado con conceptos profesionales.
-    Incluye suited premium, pocket pairs, conectores, etc.
+    REAL poker hand evaluator using phevaluator via pure_callback.
+    Compatible with JAX JIT compilation.
     """
     # Verificar si las cartas son válidas (todas >= 0)
     cards_valid = jnp.all(cards_jax >= 0)
     
-    # Evaluación avanzada puramente JAX
-    def advanced_evaluation():
-        # Calcular ranks y suits usando operaciones JAX puras
-        ranks = cards_jax // 4  # 0-12 (2 hasta A)
-        suits = cards_jax % 4   # 0-3 (spades, hearts, diamonds, clubs)
+    def real_evaluation():
+        """Use the REAL poker evaluator"""
+        # Import here to avoid circular imports
+        from poker_bot.core.full_game_engine import evaluate_hand_wrapper
+        import numpy as np
         
-        # Hand strength avanzado
-        high_rank = jnp.max(ranks)
-        low_rank = jnp.min(ranks)
-        rank_diff = high_rank - low_rank
+        # Convert JAX array to numpy for the evaluator
+        cards_np = np.asarray(cards_jax)
         
-        # POCKET PAIRS - Premium hands
-        is_pair = (ranks[0] == ranks[1]).astype(jnp.int32)
-        pair_strength = lax.cond(
-            is_pair == 1,
-            lambda: jnp.int32(2500 + high_rank * 200),  # AA=4900, KK=4700, etc.
-            lambda: jnp.int32(0)
+        # Use pure_callback to call the real evaluator
+        strength = jax.pure_callback(
+            evaluate_hand_wrapper,
+            jax.ShapeDtypeStruct((), jnp.int32),
+            cards_np,
+            vmap_method='sequential'
         )
         
-        # HIGH CARDS - Face cards premium
-        high_card_strength = ((high_rank * 15 + low_rank) * 8).astype(jnp.int32)
-        
-        # SUITED PREMIUM - Professional level bonus
-        is_suited = (suits[0] == suits[1]).astype(jnp.int32)
-        suited_bonus = lax.cond(
-            is_suited == 1,
-            lambda: lax.cond(
-                high_rank >= 10,  # J+ suited
-                lambda: jnp.int32(800),      # Premium suited
-                lambda: lax.cond(
-                    rank_diff <= 4,  # Suited connectors
-                    lambda: jnp.int32(500),     # Good suited
-                    lambda: jnp.int32(300)      # Basic suited
-                )
-            ),
-            lambda: jnp.int32(0)
-        )
-        
-        # CONNECTORS - Straight potential
-        connector_bonus = lax.cond(
-            rank_diff <= 4,  # 5 card straight possible
-            lambda: lax.cond(
-                rank_diff == 1,  # Perfect connector
-                lambda: jnp.int32(400),
-                lambda: lax.cond(
-                    rank_diff <= 2,  # 1-gap connector
-                    lambda: jnp.int32(200),
-                    lambda: jnp.int32(100)      # 2+ gap
-                )
-            ),
-            lambda: jnp.int32(0)
-        )
-        
-        # BROADWAY - T+ cards
-        broadway_bonus = lax.cond(
-            (high_rank >= 9) & (low_rank >= 9),  # Both T+
-            lambda: jnp.int32(600),
-            lambda: lax.cond(
-                high_rank >= 11,  # K+ high card
-                lambda: jnp.int32(300),
-                lambda: jnp.int32(0)
-            )
-        )
-        
-        total_strength = (
-            pair_strength + 
-            high_card_strength + 
-            suited_bonus + 
-            connector_bonus + 
-            broadway_bonus
-        )
-        
-        return jnp.clip(total_strength, 0, 9999).astype(jnp.int32)
+        return strength
     
-    # Invalid hand case
     def invalid_evaluation():
-        return jnp.int32(9999)  # Peor hand strength posible
+        return jnp.int32(0)  # Invalid hand
     
-    # Usar lax.cond para compatibilidad JAX
+    # Use real evaluator if cards are valid
     return lax.cond(
         cards_valid,
-        advanced_evaluation,
+        real_evaluation,
         invalid_evaluation
     )
 
