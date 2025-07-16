@@ -354,7 +354,7 @@ def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
             state['hole_cards'],
             state['community_cards'], 
             active_players,
-            vmap_method=None
+            vmap_method='sequential'
         )
         
         # Distribuir pot entre ganadores
