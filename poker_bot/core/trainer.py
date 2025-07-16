@@ -20,15 +20,15 @@ class TrainerConfig:
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step (ESTRUCTURA FINAL) ----------
-@partial(jax.jit, static_argnums=(2,))
-def _jitted_train_step(regrets: Array, strategy: Array, config: TrainerConfig, key: Array):
+@jax.jit
+def _jitted_train_step(regrets: Array, strategy: Array, batch_size: int, num_actions: int, max_info_sets: int, key: Array):
     """
     Un paso de entrenamiento completo, compilado con JIT.
     Esta versión es un placeholder de la lógica de CFR, pero tiene la
     arquitectura correcta para ser rápida.
     """
     # 1. Simular el batch con el motor JIT.
-    keys = jax.random.split(key, config.batch_size)
+    keys = jax.random.split(key, batch_size)
     
     # Asumimos que batch_play ahora puede devolver información de estados si la necesitáramos.
     payoffs, histories = fge.batch_play(keys)
@@ -41,15 +41,15 @@ def _jitted_train_step(regrets: Array, strategy: Array, config: TrainerConfig, k
     # actualización de ejemplo.
 
     # Generamos índices de ejemplo para actualizar.
-    num_updates = config.batch_size * 5  # Un número de ejemplo de estados visitados.
-    info_set_indices = jax.random.randint(key, (num_updates,), 0, config.max_info_sets)
+    num_updates = batch_size * 5  # Un número de ejemplo de estados visitados.
+    info_set_indices = jax.random.randint(key, (num_updates,), 0, max_info_sets)
     
     # Generamos deltas de regrets aleatorios para simular el cálculo de CFR.
     # La forma del delta debe coincidir con la de los regrets para esos índices.
     # Tomamos el payoff promedio como base para el regret.
     avg_payoff = jnp.mean(payoffs, axis=0) # Shape (6,)
     # Usamos un delta basado en el payoff del primer jugador como ejemplo.
-    regret_delta_base = jax.random.normal(key, (num_updates, config.num_actions)) * avg_payoff[0]
+    regret_delta_base = jax.random.normal(key, (num_updates, num_actions)) * avg_payoff[0]
     
     new_regrets = regrets.at[info_set_indices].add(regret_delta_base)
 
@@ -81,7 +81,7 @@ class PokerTrainer:
             iter_key = jax.random.fold_in(key, self.iteration)
             
             # Ejecutar el paso de entrenamiento compilado
-            self.regrets, self.strategy = _jitted_train_step(self.regrets, self.strategy, self.config, iter_key)
+            self.regrets, self.strategy = _jitted_train_step(self.regrets, self.strategy, self.config.batch_size, self.config.num_actions, self.config.max_info_sets, iter_key)
             
             # Sincronizar para obtener una medición de tiempo precisa en cada iteración.
             self.regrets.block_until_ready()
