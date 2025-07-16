@@ -567,7 +567,7 @@ def _jitted_train_step(regrets, strategy, key):
         game_hole_cards = game_results['hole_cards'][game_idx]  # [6, 2]
         
         # Para cada jugador, actualizar regrets basándose en el outcome del juego
-        def update_regrets_for_player(player_idx):
+        def update_regrets_for_player(current_regrets, player_idx):
             # Obtener info set del jugador
             info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
             player_payoff = game_payoff[player_idx]
@@ -654,13 +654,13 @@ def _jitted_train_step(regrets, strategy, key):
             # Calcular regrets para todas las acciones
             action_regrets = jax.vmap(calculate_action_regret)(jnp.arange(cfg.num_actions))
             
-            # Actualizar regrets para este info set
-            return game_regrets.at[info_set_idx].add(action_regrets)
+            # CORREGIDO: Actualizar regrets acumulativamente
+            return current_regrets.at[info_set_idx].add(action_regrets)
         
-        # Actualizar regrets para todos los jugadores
+        # CORREGIDO: Actualizar regrets para todos los jugadores ACUMULATIVAMENTE
         final_regrets = game_regrets
         for player_idx in range(6):
-            final_regrets = update_regrets_for_player(player_idx)
+            final_regrets = update_regrets_for_player(final_regrets, player_idx)
         
         return final_regrets
     
