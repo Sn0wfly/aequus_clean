@@ -56,16 +56,7 @@ production:
 # Test compilation and basic functionality
 test: $(OUTPUT_LIB)
 	@echo "🧪 Testing CUDA library..."
-	python3 -c "
-import ctypes
-lib = ctypes.CDLL('./$(OUTPUT_LIB)')
-print('✅ Library loaded successfully')
-print('Available functions:')
-print('  - cuda_evaluate_single_hand')
-print('  - cuda_init_cfr_trainer') 
-print('  - cuda_cfr_train_step')
-print('  - cuda_cleanup_cfr_trainer')
-"
+	python3 -c "import ctypes; lib = ctypes.CDLL('./$(OUTPUT_LIB)'); print('✅ Library loaded successfully')"
 
 # Run Python trainer test
 test_trainer: $(OUTPUT_LIB)
@@ -75,11 +66,7 @@ test_trainer: $(OUTPUT_LIB)
 # Performance benchmark
 benchmark: $(OUTPUT_LIB)
 	@echo "📊 Running performance benchmark..."
-	python3 -c "
-from cuda_trainer import benchmark_cuda_vs_alternatives
-results = benchmark_cuda_vs_alternatives(batch_size=512)
-print('Benchmark complete!')
-"
+	python3 -c "from cuda_trainer import benchmark_cuda_vs_alternatives; benchmark_cuda_vs_alternatives(batch_size=512)"
 
 # Install to system (optional)
 install: $(OUTPUT_LIB)
@@ -109,40 +96,6 @@ check_cuda:
 	@echo "Include: $(CUDA_INCLUDE)"
 	@echo "Lib Path: $(CUDA_LIB_PATH)"
 
-# Memory usage analysis
-analyze_memory: $(OUTPUT_LIB)
-	@echo "🧮 Memory usage analysis..."
-	python3 -c "
-from cuda_trainer import CUDAPokerCFR
-trainer = CUDAPokerCFR(batch_size=512)
-print(f'GPU Memory: {trainer._calculate_memory_usage():.1f} MB')
-print('Memory breakdown:')
-print('  - Regrets: 1.1 MB')  
-print('  - Strategy: 1.1 MB')
-print('  - Game simulation: 0.5 MB')
-print('  - Random states: 24 MB')
-print('  - Total: ~27 MB for batch_size=512')
-"
-
-# Performance tuning guide
-tune:
-	@echo "⚡ Performance Tuning Guide:"
-	@echo ""
-	@echo "1. Batch Size Optimization:"
-	@echo "   - Start with batch_size=512"
-	@echo "   - Increase until GPU memory ~80% full"
-	@echo "   - Monitor with: nvidia-smi"
-	@echo ""
-	@echo "2. CUDA Architecture:"
-	@echo "   - RTX 3090/4090: -arch=sm_86"
-	@echo "   - RTX 2080/3080: -arch=sm_75" 
-	@echo "   - GTX 1080: -arch=sm_61"
-	@echo ""
-	@echo "3. Expected Performance:"
-	@echo "   - RTX 4090: >200 it/s"
-	@echo "   - RTX 3090: >150 it/s"
-	@echo "   - RTX 3080: >100 it/s"
-
 # Clean build files
 clean:
 	rm -f $(OUTPUT_LIB) *.o *.so
@@ -162,15 +115,8 @@ help:
 	@echo "  benchmark   - Run performance benchmark"
 	@echo "  debug       - Build with debug symbols"
 	@echo "  check_cuda  - Check CUDA environment"
-	@echo "  tune        - Show performance tuning guide"
 	@echo "  clean       - Remove build files"
 	@echo "  install     - Install to system (sudo)"
-	@echo ""
-	@echo "Usage examples:"
-	@echo "  make              # Standard build"
-	@echo "  make production   # Maximum performance"
-	@echo "  make test_trainer # Full test"
-	@echo "  make benchmark    # Performance test"
 
 # Default help when no target specified
 .DEFAULT_GOAL := help 
