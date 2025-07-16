@@ -62,7 +62,7 @@ def _jitted_train_step(regrets, strategy, key):
                 cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
                 regret_delta = cfv_all - cfv_all[action]
 
-                info_set_idx = player_idx % cfg.max_info_sets
+                info_set_idx = jnp.mod(player_idx.astype(jnp.int64), cfg.max_info_sets)
                 new_regrets = regrets.at[info_set_idx].add(regret_delta)
                 pos = jnp.maximum(new_regrets[info_set_idx], 0.0)
                 norm = jnp.sum(pos)
