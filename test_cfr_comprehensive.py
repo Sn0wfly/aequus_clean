@@ -14,15 +14,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Import global para evitar problemas de scope
+from poker_bot.core.trainer import PokerTrainer, TrainerConfig
+from poker_bot.core.trainer import evaluate_poker_intelligence, compute_mock_info_set
+import jax.numpy as jnp
+
 def main():
     try:
         logger.info("🔧 TESTING CFR COMPREHENSIVO - MÁS ITERACIONES")
         logger.info("="*60)
-        
-        # Import después de setup
-        from poker_bot.core.trainer import PokerTrainer, TrainerConfig
-        from poker_bot.core.trainer import evaluate_poker_intelligence, compute_mock_info_set
-        import jax.numpy as jnp
         
         logger.info("✅ Módulos importados correctamente")
         
