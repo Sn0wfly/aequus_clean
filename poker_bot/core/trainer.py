@@ -32,13 +32,13 @@ def _jitted_train_step(regrets, strategy, key):
 
     def game_step(carry, step_idx):
         regrets, strategy = carry
-        
-        def one_game(batch_idx):
+
+        def process_game(batch_idx):
             payoff = payoffs[batch_idx]
             history = histories[batch_idx]
             action = history[step_idx]
             valid = action != -1
-            
+
             def do_update():
                 state = fge.initial_state_for_idx(batch_idx)
                 state = lax.fori_loop(
@@ -51,41 +51,42 @@ def _jitted_train_step(regrets, strategy, key):
                     ),
                     state
                 )
-                
-                player_idx = state.cur_player[0]
+
+                player_idx = jnp.squeeze(state.cur_player)  # Compatible con vmap
                 legal = fge.get_legal_actions(state)
-                
+
                 def cfv(a):
                     return lax.cond(legal[a], lambda: payoff[player_idx], lambda: 0.0)
+
                 cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
                 regret_delta = cfv_all - cfv_all[action]
-                
-                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
-                
-                return info_set_idx, regret_delta
-            
-            info_idx, delta = lax.cond(
-                valid, 
-                do_update, 
-                lambda: (0, jnp.zeros(cfg.num_actions))
-            )
-            
-            masked_delta = jnp.where(valid, delta, 0.0)
-            
-            return info_idx, masked_delta
 
-        info_indices, deltas = jax.vmap(one_game)(jnp.arange(cfg.batch_size))
-        
-        def accumulate_deltas(i, acc_regrets):
+                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
+                return info_set_idx, regret_delta, valid
+
+            info_idx, delta, valid = lax.cond(
+                valid,
+                do_update,
+                lambda: (0, jnp.zeros(cfg.num_actions), False)
+            )
+
+            return info_idx, delta, valid
+
+        # Procesamos todos los juegos del batch
+        info_indices, deltas, valids = jax.vmap(process_game)(jnp.arange(cfg.batch_size))
+
+        # Acumulamos todos los deltas en los regrets
+        def accumulate(i, acc_regrets):
             idx = info_indices[i]
             delta = deltas[i]
-            return acc_regrets.at[idx].add(delta)
-        
-        new_regrets = lax.fori_loop(
-            0, cfg.batch_size,
-            accumulate_deltas,
-            regrets
-        )
+            valid = valids[i]
+            return jnp.where(
+                valid,
+                acc_regrets.at[idx].add(delta),
+                acc_regrets
+            )
+
+        new_regrets = lax.fori_loop(0, cfg.batch_size, accumulate, regrets)
         
         positive_regrets = jnp.maximum(new_regrets, 0.0)
         regret_sums = jnp.sum(positive_regrets, axis=1, keepdims=True)

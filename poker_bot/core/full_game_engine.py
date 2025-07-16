@@ -73,7 +73,8 @@ def is_betting_done(status, bets, acted, _):
 @jax.jit
 def get_legal_actions(state: GameState):
     mask = jnp.zeros(3, dtype=jnp.bool_)
-    p = state.cur_player[0]
+    # Extraer índice del jugador de manera compatible con vmap
+    p = jnp.squeeze(state.cur_player)  # Funciona tanto para escalares como arrays
     status = state.player_status[p]
     can_act = status == 0
     current = state.bets[p]
@@ -87,7 +88,7 @@ def get_legal_actions(state: GameState):
 # ---------- Step ----------
 @jax.jit
 def apply_action(state, action):
-    p = state.cur_player[0]
+    p = jnp.squeeze(state.cur_player)  # Compatible con vmap
     current = state.bets[p]
     max_bet = jnp.max(state.bets)
     to_call = max_bet - current
@@ -132,7 +133,8 @@ def _betting_body(state):
     action = jax.random.categorical(subkey, jnp.where(legal, 0.0, -1e9))
     state = replace(state, key=key)
     state = apply_action(state, action)
-    next_p = next_active_player(state.player_status, (state.cur_player[0] + 1) % 6)
+    current_p = jnp.squeeze(state.cur_player)  # Compatible con vmap
+    next_p = next_active_player(state.player_status, (current_p + 1) % 6)
     return replace(state, cur_player=jnp.array([next_p], dtype=jnp.int8))
 
 @jax.jit
@@ -215,8 +217,10 @@ def batch_play(keys):
     return jax.vmap(play_one_game)(keys)
 
 @jax.jit
-def initial_state_for_idx(idx: int):
-    key = jax.random.fold_in(jax.random.PRNGKey(0), idx)
+def initial_state_for_idx(idx):
+    # Convertir idx a escalar de manera compatible con vmap
+    idx_scalar = jnp.squeeze(idx) if hasattr(idx, 'squeeze') else idx
+    key = jax.random.fold_in(jax.random.PRNGKey(0), idx_scalar)
     # Devuelve solo el estado inicial, no payoffs ni historia
     deck = jax.random.permutation(key, jnp.arange(52, dtype=jnp.int8))
     key, subkey = jax.random.split(key)
