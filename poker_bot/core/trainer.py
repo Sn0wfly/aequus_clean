@@ -1224,8 +1224,12 @@ class PokerTrainer:
     def train(self, num_iterations: int, save_path: str, save_interval: int, snapshot_iterations=None):
         key = jax.random.PRNGKey(42)  # Semilla fija para reproducibilidad
         
-        # Iteraciones para snapshots (por defecto: 1/3, 2/3, final)
+        # Configurar snapshots - puede ser None para entrenamiento simple
+        do_snapshots = snapshot_iterations is not None
         if snapshot_iterations is None:
+            snapshot_iterations = []  # Lista vacía, no evaluaciones
+        elif len(snapshot_iterations) == 0:
+            # Si se pasa lista vacía, usar defaults
             snapshot_iterations = [
                 max(1, num_iterations // 3),      # 33%
                 max(1, 2 * num_iterations // 3),  # 66%
@@ -1236,7 +1240,10 @@ class PokerTrainer:
         logger.info(f"   Total iteraciones: {num_iterations}")
         logger.info(f"   Guardar cada: {save_interval} iteraciones")
         logger.info(f"   Path base: {save_path}")
-        logger.info(f"   Snapshots en: {snapshot_iterations}")
+        if do_snapshots and snapshot_iterations:
+            logger.info(f"   Snapshots en: {snapshot_iterations}")
+        else:
+            logger.info(f"   Modo rápido: Sin evaluaciones durante entrenamiento")
         
         # =================== VALIDACIÓN CRÍTICA PRE-ENTRENAMIENTO ===================
         logger.info("\n🔍 EJECUTANDO VALIDACIÓN CRÍTICA PRE-ENTRENAMIENTO...")
@@ -1302,8 +1309,8 @@ class PokerTrainer:
                     improvement = mid_analysis['unique_strategies'] - debug_analysis['unique_strategies']
                     logger.info(f"📈 Cambio en diversidad: {improvement:+d} estrategias únicas")
                 
-                # Tomar snapshots del Poker IQ en iteraciones específicas
-                if self.iteration in snapshot_iterations:
+                # Tomar snapshots del Poker IQ en iteraciones específicas (solo si está habilitado)
+                if do_snapshots and self.iteration in snapshot_iterations:
                     # Usar evaluación mejorada con diagnósticos adicionales
                     poker_iq = enhanced_poker_iq_evaluation(self.strategy, self.config, self.iteration)
                     self.poker_iq_snapshots[self.iteration] = poker_iq
@@ -1318,7 +1325,7 @@ class PokerTrainer:
                     logger.info(f"   - Stability: {poker_iq['stability_score']:.1f}/10")
                     
                     # Validación adicional en iteración intermedia
-                    if self.iteration == num_iterations // 2:
+                    if do_snapshots and self.iteration == num_iterations // 2:
                         logger.info("\n🔍 VALIDACIÓN INTERMEDIA (50% completado)...")
                         mid_validation = validate_training_data_integrity(
                             self.strategy, 
@@ -1370,21 +1377,30 @@ class PokerTrainer:
         final_game_results = unified_batch_simulation(final_keys)[2] # Extract game_results
         final_analysis = debug_info_set_distribution(self.strategy, final_game_results)
         
-        # Evaluación final del Poker IQ
-        logger.info("\n🧠 EVALUACIÓN FINAL DE POKER IQ...")
-        final_poker_iq = enhanced_poker_iq_evaluation(self.strategy, self.config, num_iterations)
-        self.poker_iq_snapshots[num_iterations] = final_poker_iq
-        
-        logger.info(f"🏆 RESULTADO FINAL:")
-        logger.info(f"   - IQ Total: {final_poker_iq['total_poker_iq']:.1f}/100")
-        logger.info(f"   - IQ Enhanced: {final_poker_iq['total_enhanced_score']:.1f}/110")
+        # Evaluación final del Poker IQ (solo si snapshots están habilitados)
+        if do_snapshots:
+            logger.info("\n🧠 EVALUACIÓN FINAL DE POKER IQ...")
+            final_poker_iq = enhanced_poker_iq_evaluation(self.strategy, self.config, num_iterations)
+            self.poker_iq_snapshots[num_iterations] = final_poker_iq
+            
+            logger.info(f"🏆 RESULTADO FINAL:")
+            logger.info(f"   - IQ Total: {final_poker_iq['total_poker_iq']:.1f}/100")
+            logger.info(f"   - IQ Enhanced: {final_poker_iq['total_enhanced_score']:.1f}/110")
+        else:
+            logger.info("\n✅ ENTRENAMIENTO COMPLETADO (modo rápido)")
         
         # Guardamos el modelo final
         final_path = f"{save_path}_final.pkl"
         self.save_model(final_path)
         
-        # NUEVO: Reporte de evolución de inteligencia
-        self._log_poker_evolution_summary(num_iterations, total_time)
+        # NUEVO: Reporte de evolución de inteligencia (solo si hay snapshots)
+        if do_snapshots and self.poker_iq_snapshots:
+            self._log_poker_evolution_summary(num_iterations, total_time)
+        else:
+            logger.info(f"\n⏱️ ESTADÍSTICAS FINALES:")
+            logger.info(f"   - Tiempo total: {total_time:.1f}s ({total_time/60:.1f} min)")
+            logger.info(f"   - Velocidad: {num_iterations/total_time:.1f} iter/s")
+            logger.info(f"   - Throughput: ~{num_iterations * 128 * 50 / total_time:.0f} hands/s")
 
     def _log_poker_evolution_summary(self, total_iterations, total_time):
         """Muestra un resumen de la evolución del Poker IQ"""
