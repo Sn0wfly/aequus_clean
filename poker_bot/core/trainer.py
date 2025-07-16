@@ -127,60 +127,55 @@ class TrainerConfig:
     weak_hand_threshold: int = 1200         # Manos que hay que foldear
     bluff_threshold: int = 800              # Manos para bluff ocasional
 
-# ---------- Elite Game Engine Wrapper para CFR ----------
+# ---------- Elite Game Engine Wrapper para CFR - UNIFICADO ----------
 @jax.jit
-def elite_batch_play(keys):
+def unified_batch_simulation(keys):
     """
-    ARREGLADO: Usa el motor real con historiales reales de acciones.
-    Retorna (payoffs, histories) donde histories son las acciones REALES que llevaron al payoff.
+    SOLUCIÓN DEFINITIVA: Una sola función que simula y extrae todo consistentemente.
+    Retorna tanto historiales reales como datos de cartas de la misma simulación.
     """
-    # Usar el motor con historiales reales
-    payoffs, action_histories = fge.batch_play(keys)
-    
-    # action_histories ya contiene las acciones reales, no sintéticas
-    return payoffs, action_histories
-
-@jax.jit 
-def simulate_games_for_info_sets(keys):
-    """
-    NUEVO: Simula juegos y retorna formato compatible con compute_advanced_info_set.
-    Usa el mismo motor real pero retorna formato de diccionario.
-    """
-    # Usar el motor real para simular
-    payoffs, action_histories = fge.batch_play(keys)
-    
-    # Necesitamos recrear los datos del juego para info sets
-    # Extraer las cartas de los estados finales
+    # Simular una sola vez para obtener datos consistentes
     batch_size = len(keys)
     
-    # Simular cartas usando las mismas semillas 
-    def extract_game_data(key):
-        # Recrear el deck para obtener hole cards y community cards
+    # Simular cada juego y extraer datos completos
+    def simulate_single_game_full(key):
+        # SOLUCIÓN SIMPLE: Usar exactamente el mismo proceso que play_one_game
+        # 1. Generar deck con la key original (mismo que hace play_one_game)
         deck = jax.random.permutation(key, jnp.arange(52, dtype=jnp.int8))
         
-        # Extraer hole cards (primeras 12 cartas para 6 jugadores)
+        # 2. Extraer cartas del deck (exactamente como play_one_game)
         hole_cards = deck[:12].reshape((6, 2))
-        
-        # Extraer community cards (5 cartas después de las hole cards)
         community_cards = deck[12:17]
         
+        # 3. Simular el juego con la MISMA key para obtener payoffs consistentes
+        payoffs, action_hist = fge.play_one_game(key)
+        
         return {
+            'payoffs': payoffs,
+            'action_hist': action_hist,
             'hole_cards': hole_cards,
-            'community_cards': community_cards
+            'community_cards': community_cards,
+            'final_pot': jnp.sum(jnp.abs(payoffs)),
         }
     
-    # Extraer datos para todo el batch
-    batch_game_data = jax.vmap(extract_game_data)(keys)
+    # Vectorizar la simulación completa
+    full_results = jax.vmap(simulate_single_game_full)(keys)
     
-    # Crear formato compatible con compute_advanced_info_set
-    return {
+    # Retornar en los dos formatos necesarios
+    payoffs = full_results['payoffs']
+    histories = full_results['action_hist']
+    
+    # Formato para info sets
+    game_results = {
         'payoffs': payoffs,
-        'hole_cards': batch_game_data['hole_cards'],  # [batch_size, 6, 2]
-        'final_community': batch_game_data['community_cards'],  # [batch_size, 5]
-        'final_pot': jnp.sum(jnp.abs(payoffs), axis=1),  # Aproximar pot size
-        'player_stacks': jnp.ones((batch_size, 6)) * 100.0,  # Stack inicial
-        'player_bets': jnp.abs(payoffs)  # Usar payoffs como proxy de bets
+        'hole_cards': full_results['hole_cards'],  # [batch_size, 6, 2]
+        'final_community': full_results['community_cards'],  # [batch_size, 5]
+        'final_pot': full_results['final_pot'],
+        'player_stacks': jnp.ones((batch_size, 6)) * 100.0,
+        'player_bets': jnp.abs(payoffs)
     }
+    
+    return payoffs, histories, game_results
 
 # ---------- Info Set Computation con Bucketing Avanzado ----------
 def compute_advanced_info_set(game_results, player_idx, game_idx):
@@ -403,10 +398,7 @@ def _jitted_train_step(regrets, strategy, key):
     keys = jax.random.split(key, cfg.batch_size)
     
     # MEJORADO: Usar wrapper elite que retorna formato compatible
-    payoffs, histories = elite_batch_play(keys)
-    
-    # También obtener resultados completos para info sets reales
-    game_results = simulate_games_for_info_sets(keys)
+    payoffs, histories, game_results = unified_batch_simulation(keys)
     
     # Procesar todos los juegos del batch directamente
     def process_single_game(game_idx):
@@ -837,7 +829,7 @@ class PokerTrainer:
         # Generar datos de muestra para debug
         debug_key = jax.random.PRNGKey(42)
         debug_keys = jax.random.split(debug_key, 128)
-        debug_game_results = simulate_games_for_info_sets(debug_keys)
+        debug_game_results = unified_batch_simulation(debug_keys)[2] # Extract game_results
         debug_analysis = debug_info_set_distribution(self.strategy, debug_game_results)
         
         import time
@@ -870,7 +862,7 @@ class PokerTrainer:
                 # NUEVO: Debug intermedio en la mitad del entrenamiento
                 if self.iteration == num_iterations // 2:
                     logger.info("\n🔍 DIAGNÓSTICO INTERMEDIO (50% completado)...")
-                    mid_game_results = simulate_games_for_info_sets(jax.random.split(iter_key, 128))
+                    mid_game_results = unified_batch_simulation(jax.random.split(iter_key, 128))[2] # Extract game_results
                     mid_analysis = debug_info_set_distribution(self.strategy, mid_game_results)
                     
                     # Comparar con estado inicial
@@ -906,7 +898,7 @@ class PokerTrainer:
         # NUEVO: Debug final completo
         logger.info("\n🔍 DIAGNÓSTICO FINAL...")
         final_keys = jax.random.split(jax.random.PRNGKey(99), 128)
-        final_game_results = simulate_games_for_info_sets(final_keys)
+        final_game_results = unified_batch_simulation(final_keys)[2] # Extract game_results
         final_analysis = debug_info_set_distribution(self.strategy, final_game_results)
         
         # Guardamos el modelo final
