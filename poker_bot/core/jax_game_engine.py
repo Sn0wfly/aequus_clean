@@ -297,22 +297,19 @@ def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
     
     # Si hay múltiples jugadores, evaluar showdown
     def showdown_evaluation():
-        def evaluate_all_hands():
+        def evaluate_all_hands(hole_cards_array, community_cards_array, active_players_array):
             """
             Función pura que evalúa todas las manos y retorna ganadores.
-            No compatible con JIT, se llama via pure_callback.
+            Recibe arrays concretos como argumentos, no estado trazado.
             """
-            hole_cards_np = np.asarray(state['hole_cards'])
-            community_cards_np = np.asarray(state['community_cards'])
-            active_np = np.asarray(active_players)
-            
             hand_strengths = []
+            num_players = len(active_players_array)
             
             for player_idx in range(num_players):
-                if active_np[player_idx]:
+                if active_players_array[player_idx]:
                     # Combinar hole cards + community cards
-                    player_hole = hole_cards_np[player_idx]
-                    all_cards = np.concatenate([player_hole, community_cards_np])
+                    player_hole = hole_cards_array[player_idx]
+                    all_cards = np.concatenate([player_hole, community_cards_array])
                     # Filtrar cartas válidas (>= 0)
                     valid_cards = all_cards[all_cards >= 0]
                     
@@ -330,11 +327,11 @@ def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
             
             # Encontrar la mejor mano (menor número = mejor en phevaluator)
             hand_strengths = np.array(hand_strengths)
-            active_strengths = hand_strengths[active_np]
+            active_strengths = hand_strengths[active_players_array]
             
             if len(active_strengths) > 0:
                 best_strength = np.min(active_strengths)
-                winners = (hand_strengths == best_strength) & active_np
+                winners = (hand_strengths == best_strength) & active_players_array
                 num_winners = np.sum(winners)
                 
                 if num_winners > 0:
@@ -342,7 +339,7 @@ def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
                 else:
                     # Fallback: el primer jugador activo gana
                     fallback_winners = np.zeros(num_players, dtype=np.float32)
-                    first_active = np.where(active_np)[0]
+                    first_active = np.where(active_players_array)[0]
                     if len(first_active) > 0:
                         fallback_winners[first_active[0]] = 1.0
                     return fallback_winners
@@ -350,10 +347,13 @@ def calculate_real_payoffs(state: Dict) -> jnp.ndarray:
                 # No hay jugadores activos, devolver array vacío
                 return np.zeros(num_players, dtype=np.float32)
         
-        # Usar pure_callback para llamar al evaluador desde función JIT
+        # Usar pure_callback con argumentos específicos, no estado completo
         winner_mask = jax.pure_callback(
             evaluate_all_hands,
             jnp.zeros(num_players, dtype=jnp.float32),
+            state['hole_cards'],
+            state['community_cards'], 
+            active_players,
             vmap_method=None
         )
         
