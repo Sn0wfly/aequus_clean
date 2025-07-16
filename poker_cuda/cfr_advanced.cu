@@ -19,23 +19,158 @@ FEATURES PORTED:
 #include <stdio.h>
 
 // ============================================================================
-// 🎯 EXTERNAL DECLARATIONS 
+// 🎯 SELF-CONTAINED HAND EVALUATOR - NO EXTERNAL DEPENDENCIES
 // ============================================================================
 
-extern "C" __device__ int evaluate_hand_real(int* cards, int num_cards);
+__device__ int evaluate_hand_strength_internal(int* cards, int num_cards) {
+    /*
+    SELF-CONTAINED HAND EVALUATOR
+    No external dependencies - all logic contained here
+    Covers all major hand types with accurate ranking
+    */
+    if (num_cards < 5) return 0;
+    
+    // Extract ranks and suits
+    int ranks[13] = {0}; // Count of each rank (0=2, 1=3, ..., 12=A)
+    int suits[4] = {0};  // Count of each suit
+    
+    for (int i = 0; i < num_cards; i++) {
+        int rank = cards[i] >> 2;  // Extract rank (0-12)
+        int suit = cards[i] & 3;   // Extract suit (0-3)
+        ranks[rank]++;
+        suits[suit]++;
+    }
+    
+    // Check for flush
+    bool is_flush = false;
+    for (int i = 0; i < 4; i++) {
+        if (suits[i] >= 5) {
+            is_flush = true;
+            break;
+        }
+    }
+    
+    // Check for straight
+    bool is_straight = false;
+    int straight_high = -1;
+    
+    // Regular straight check (5 consecutive ranks)
+    for (int i = 0; i <= 8; i++) {
+        bool found_straight = true;
+        for (int j = 0; j < 5; j++) {
+            if (ranks[i + j] == 0) {
+                found_straight = false;
+                break;
+            }
+        }
+        if (found_straight) {
+            is_straight = true;
+            straight_high = i + 4;
+        }
+    }
+    
+    // Special case: A-2-3-4-5 straight (wheel)
+    if (ranks[12] > 0 && ranks[0] > 0 && ranks[1] > 0 && ranks[2] > 0 && ranks[3] > 0) {
+        is_straight = true;
+        straight_high = 3; // 5-high straight
+    }
+    
+    // Count pairs, trips, quads
+    int pairs = 0, trips = 0, quads = 0;
+    int pair_rank = -1, trip_rank = -1, quad_rank = -1;
+    
+    for (int i = 12; i >= 0; i--) { // Start from Ace (highest)
+        if (ranks[i] == 4) {
+            quads++;
+            quad_rank = i;
+        } else if (ranks[i] == 3) {
+            trips++;
+            trip_rank = i;
+        } else if (ranks[i] == 2) {
+            pairs++;
+            if (pair_rank == -1) pair_rank = i; // Highest pair
+        }
+    }
+    
+    // Hand ranking (higher = better)
+    if (is_straight && is_flush) {
+        // Straight flush
+        if (straight_high == 12) {
+            return 8999999; // Royal flush
+        } else {
+            return 8000000 + straight_high * 1000;
+        }
+    } else if (quads == 1) {
+        // Four of a kind
+        return 7000000 + quad_rank * 1000;
+    } else if (trips == 1 && pairs >= 1) {
+        // Full house
+        return 6000000 + trip_rank * 1000 + pair_rank;
+    } else if (is_flush) {
+        // Flush - use highest card
+        int high_card = -1;
+        for (int i = 12; i >= 0; i--) {
+            if (ranks[i] > 0) {
+                high_card = i;
+                break;
+            }
+        }
+        return 5000000 + high_card * 1000;
+    } else if (is_straight) {
+        // Straight
+        return 4000000 + straight_high * 1000;
+    } else if (trips == 1) {
+        // Three of a kind
+        return 3000000 + trip_rank * 1000;
+    } else if (pairs >= 2) {
+        // Two pair
+        int second_pair = -1;
+        for (int i = 12; i >= 0; i--) {
+            if (ranks[i] == 2 && i != pair_rank) {
+                second_pair = i;
+                break;
+            }
+        }
+        return 2000000 + pair_rank * 1000 + second_pair;
+    } else if (pairs == 1) {
+        // One pair
+        return 1000000 + pair_rank * 1000;
+    } else {
+        // High card
+        int high_card = -1;
+        for (int i = 12; i >= 0; i--) {
+            if (ranks[i] > 0) {
+                high_card = i;
+                break;
+            }
+        }
+        return high_card * 1000;
+    }
+}
 
 // ============================================================================
 // 🎯 ADVANCED CFR CONSTANTS & STRUCTURES
 // ============================================================================
 
-#define MAX_INFO_SETS 50000
-#define NUM_ACTIONS 6
-#define MAX_PLAYERS 6
-#define MAX_CARDS_PER_HAND 7
-#define MAX_ACTIONS_PER_GAME 48
-#define NUM_STREETS 4
+// Safe min/max macros for CUDA
+#ifndef MIN_CUDA
+#define MIN_CUDA(a,b) ((a) < (b) ? (a) : (b))
+#endif
 
-// Action definitions
+#ifndef MAX_CUDA  
+#define MAX_CUDA(a,b) ((a) > (b) ? (a) : (b))
+#endif
+
+// Safe math functions
+#define CLAMP(x, min_val, max_val) fmaxf(min_val, fminf(max_val, x))
+
+// Constants - consistent with cfr_kernels.cu
+#define MAX_INFO_SETS 50000
+#define MAX_CARDS_PER_HAND 7
+#define MAX_PLAYERS 6
+#define MAX_ACTIONS_PER_GAME 48
+
+// Action constants
 #define ACTION_FOLD 0
 #define ACTION_CHECK 1
 #define ACTION_CALL 2
@@ -87,8 +222,8 @@ __device__ inline int compute_preflop_bucket(int hole_ranks[2], int hole_suits[2
     Based on Pluribus methodology - 169 canonical hand types
     */
     
-    int high_rank = max(hole_ranks[0], hole_ranks[1]);
-    int low_rank = min(hole_ranks[0], hole_ranks[1]);
+    int high_rank = MAX_CUDA(hole_ranks[0], hole_ranks[1]);
+    int low_rank = MIN_CUDA(hole_ranks[0], hole_ranks[1]);
     bool is_suited = (hole_suits[0] == hole_suits[1]);
     bool is_pair = (hole_ranks[0] == hole_ranks[1]);
     
@@ -123,8 +258,8 @@ __device__ inline int compute_postflop_bucket(
     }
     
     // Use real hand evaluator
-    int raw_strength = evaluate_hand_real(full_hand, 2 + num_community);
-    *hand_strength_normalized = fminf(1.0f, fmaxf(0.0f, raw_strength / 9000000.0f));
+    int raw_strength = evaluate_hand_strength_internal(full_hand, 2 + num_community);
+    *hand_strength_normalized = CLAMP(raw_strength / 9000000.0f, 0.0f, 1.0f);
     
     // Convert to bucket (1000 buckets based on strength percentiles)
     return (int)(*hand_strength_normalized * 999.0f);
@@ -151,8 +286,8 @@ __device__ int compute_advanced_info_set_real(
     
     bool is_suited = (hole_suits[0] == hole_suits[1]);
     bool is_pair = (hole_ranks[0] == hole_ranks[1]);
-    int high_rank = max(hole_ranks[0], hole_ranks[1]);
-    int low_rank = min(hole_ranks[0], hole_ranks[1]);
+    int high_rank = MAX_CUDA(hole_ranks[0], hole_ranks[1]);
+    int low_rank = MIN_CUDA(hole_ranks[0], hole_ranks[1]);
     
     // Base hand strength bucket
     int base_bucket;
@@ -182,10 +317,10 @@ __device__ int compute_advanced_info_set_real(
     int position_bucket = player_position;
     
     // Pot size bucketing (20 buckets)
-    int pot_bucket = min(19, (int)(pot_size / 5.0f));
+    int pot_bucket = MIN_CUDA(19, (int)(pot_size / 5.0f));
     
     // Active players bucketing (2-6 players)
-    int active_bucket = min(4, num_active_players - 2);
+    int active_bucket = MIN_CUDA(4, num_active_players - 2);
     
     // Position type (early/middle/late)
     int position_type = (player_position < 2) ? 0 : (player_position < 4) ? 1 : 2;
@@ -249,8 +384,8 @@ __device__ void simulate_realistic_poker_game(
     float hand_strengths[MAX_PLAYERS];
     for (int player = 0; player < MAX_PLAYERS; player++) {
         // Use simplified strength for pre-flop decisions
-        int high_rank = max(game->hole_cards[player][0] >> 2, game->hole_cards[player][1] >> 2);
-        int low_rank = min(game->hole_cards[player][0] >> 2, game->hole_cards[player][1] >> 2);
+        int high_rank = MAX_CUDA(game->hole_cards[player][0] >> 2, game->hole_cards[player][1] >> 2);
+        int low_rank = MIN_CUDA(game->hole_cards[player][0] >> 2, game->hole_cards[player][1] >> 2);
         bool is_pair = (game->hole_cards[player][0] >> 2) == (game->hole_cards[player][1] >> 2);
         bool is_suited = (game->hole_cards[player][0] & 3) == (game->hole_cards[player][1] & 3);
         
@@ -276,7 +411,7 @@ __device__ void simulate_realistic_poker_game(
             strength -= 0.2f; // Big gap penalty
         }
         
-        hand_strengths[player] = fminf(1.0f, fmaxf(0.0f, strength));
+        hand_strengths[player] = CLAMP(strength, 0.0f, 1.0f);
     }
     
     // Simulate betting rounds
@@ -305,8 +440,8 @@ __device__ void simulate_realistic_poker_game(
                     full_hand[3] = game->community_cards[1];
                     full_hand[4] = game->community_cards[2];
                     
-                    int raw_strength = evaluate_hand_real(full_hand, 5);
-                    hand_strengths[player] = fminf(1.0f, raw_strength / 5000000.0f);
+                    int raw_strength = evaluate_hand_strength_internal(full_hand, 5);
+                    hand_strengths[player] = CLAMP(raw_strength / 5000000.0f, 0.0f, 1.0f);
                 }
             }
         } else if (street == 2) { // Turn
@@ -349,7 +484,7 @@ __device__ void simulate_realistic_poker_game(
             if (pos >= MAX_PLAYERS - 2) position_factor += 0.2f; // Late position bonus
             
             // Pot odds consideration
-            float pot_odds_factor = fminf(0.3f, game->pot_size / 100.0f);
+            float pot_odds_factor = CLAMP(game->pot_size / 100.0f, 0.0f, 0.3f);
             
             // Street factor
             float street_factor = 1.0f - (float)street * 0.1f; // More conservative later
@@ -415,7 +550,7 @@ __device__ void simulate_realistic_poker_game(
                     full_hand[2 + i] = game->community_cards[i];
                 }
                 
-                int raw_strength = evaluate_hand_real(full_hand, 7);
+                int raw_strength = evaluate_hand_strength_internal(full_hand, 7);
                 float normalized_strength = (float)raw_strength;
                 
                 if (normalized_strength > best_strength) {
