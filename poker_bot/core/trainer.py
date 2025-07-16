@@ -155,7 +155,136 @@ def compute_advanced_info_set(game_results, player_idx, game_idx):
     # Asegurar que esté en el rango válido
     return jnp.mod(info_set_id, 50000).astype(jnp.int32)
 
-# ---------- JAX-Native CFR Step MEJORADO ----------
+# ---------- DIAGNÓSTICO DETALLADO PARA DEBUG ----------
+def debug_info_set_distribution(strategy, game_results, num_samples=1000):
+    """
+    Analiza la distribución de info sets y estrategias para debugging.
+    Permite entender por qué no está aprendiendo conceptos básicos.
+    """
+    logger.info("\n🔍 INICIANDO DIAGNÓSTICO DETALLADO DE INFO SETS")
+    logger.info("="*60)
+    
+    # Contadores para análisis
+    info_set_counts = {}
+    strategy_samples = {}
+    
+    # Generar muestras de info sets para análisis
+    for game_idx in range(min(num_samples, 100)):  # Limitar para evitar overflow
+        for player_idx in range(6):
+            try:
+                info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
+                info_set_idx_py = int(info_set_idx)  # Convertir a Python int
+                
+                if info_set_idx_py not in info_set_counts:
+                    info_set_counts[info_set_idx_py] = 0
+                    strategy_samples[info_set_idx_py] = strategy[info_set_idx_py].copy()
+                
+                info_set_counts[info_set_idx_py] += 1
+                
+            except Exception as e:
+                logger.warning(f"Error en info set debug game={game_idx}, player={player_idx}: {e}")
+    
+    # Análisis de distribución
+    total_unique_info_sets = len(info_set_counts)
+    total_accesses = sum(info_set_counts.values())
+    
+    logger.info(f"📊 DISTRIBUCIÓN DE INFO SETS:")
+    logger.info(f"   - Info sets únicos generados: {total_unique_info_sets}")
+    logger.info(f"   - Total accesos: {total_accesses}")
+    logger.info(f"   - Densidad de uso: {total_accesses/max(1, total_unique_info_sets):.2f} accesos/info_set")
+    
+    # Análisis de estrategias más comunes
+    most_common = sorted(info_set_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    logger.info(f"\n🎯 TOP 10 INFO SETS MÁS FRECUENTES:")
+    for i, (info_set_idx, count) in enumerate(most_common):
+        strategy_vec = strategy_samples[info_set_idx]
+        aggression = float(jnp.sum(strategy_vec[3:6]))  # BET/RAISE/ALL_IN
+        fold_prob = float(strategy_vec[0])  # FOLD
+        
+        logger.info(f"   {i+1:2d}. Info set {info_set_idx:5d}: {count:3d} accesos")
+        logger.info(f"       Fold: {fold_prob:.3f}, Aggression: {aggression:.3f}")
+        logger.info(f"       Strategy: {[f'{x:.3f}' for x in strategy_vec]}")
+    
+    # Verificar si las estrategias son todas iguales (problema común)
+    unique_strategies = set()
+    for strat in strategy_samples.values():
+        strat_tuple = tuple(f"{x:.6f}" for x in strat)
+        unique_strategies.add(strat_tuple)
+    
+    logger.info(f"\n🎭 DIVERSIDAD DE ESTRATEGIAS:")
+    logger.info(f"   - Estrategias únicas: {len(unique_strategies)}")
+    logger.info(f"   - Info sets únicos: {len(strategy_samples)}")
+    
+    if len(unique_strategies) == 1:
+        logger.warning("⚠️  PROBLEMA DETECTADO: Todas las estrategias son idénticas!")
+        logger.warning("    El CFR no está diferenciando entre situaciones.")
+    elif len(unique_strategies) < len(strategy_samples) * 0.1:
+        logger.warning("⚠️  PROBLEMA DETECTADO: Muy poca diversidad de estrategias!")
+        logger.warning(f"    Solo {len(unique_strategies)} estrategias para {len(strategy_samples)} info sets.")
+    
+    return {
+        'unique_info_sets': total_unique_info_sets,
+        'unique_strategies': len(unique_strategies),
+        'total_accesses': total_accesses,
+        'most_common': most_common[:5]
+    }
+
+def debug_specific_hands():
+    """
+    Debugging específico para las manos que evalúa el Poker IQ.
+    Permite verificar exactamente qué info sets se están generando.
+    """
+    logger.info("\n🃏 DEBUG DE MANOS ESPECÍFICAS (AA vs 72o)")
+    logger.info("="*50)
+    
+    # Test: AA vs 72o que usa el Poker IQ
+    aa_info_set = compute_mock_info_set(hole_ranks=[12, 12], is_suited=False, position=2)
+    trash_info_set = compute_mock_info_set(hole_ranks=[5, 0], is_suited=False, position=2)
+    
+    logger.info(f"🔍 ANÁLISIS DE INFO SETS ESPECÍFICOS:")
+    logger.info(f"   - AA (pocket aces): info_set = {aa_info_set}")
+    logger.info(f"   - 72o (trash hand): info_set = {trash_info_set}")
+    logger.info(f"   - ¿Son diferentes? {aa_info_set != trash_info_set}")
+    
+    if aa_info_set == trash_info_set:
+        logger.error("❌ PROBLEMA CRÍTICO: AA y 72o mapean al mismo info set!")
+        logger.error("    El sistema no puede distinguir entre manos buenas y malas.")
+    
+    # Test más manos
+    test_hands = [
+        ([12, 12], False, "AA"),      # Pocket Aces
+        ([11, 11], False, "KK"),      # Pocket Kings  
+        ([10, 9], True, "JTs"),       # Jack-Ten suited
+        ([10, 9], False, "JTo"),      # Jack-Ten offsuit
+        ([5, 0], False, "72o"),       # 7-2 offsuit (worst)
+        ([3, 1], False, "52o"),       # 5-2 offsuit (very bad)
+    ]
+    
+    logger.info(f"\n🃏 MAPEO DE MANOS DE TEST:")
+    info_set_mapping = {}
+    for hole_ranks, is_suited, name in test_hands:
+        for pos in [0, 2, 5]:  # Early, middle, late position
+            info_set = compute_mock_info_set(hole_ranks, is_suited, pos)
+            key = f"{name}_pos{pos}"
+            info_set_mapping[key] = info_set
+            logger.info(f"   {key:8s}: info_set = {info_set:5d}")
+    
+    # Verificar si hay suficiente diferenciación
+    unique_info_sets = len(set(info_set_mapping.values()))
+    total_hands = len(info_set_mapping)
+    
+    logger.info(f"\n📊 DIFERENCIACIÓN:")
+    logger.info(f"   - Total combinaciones: {total_hands}")
+    logger.info(f"   - Info sets únicos: {unique_info_sets}")
+    logger.info(f"   - Ratio diferenciación: {unique_info_sets/total_hands:.2f}")
+    
+    if unique_info_sets < total_hands * 0.5:
+        logger.warning("⚠️  BAJA DIFERENCIACIÓN: Muchas manos mapean a los mismos info sets")
+    
+    return info_set_mapping
+
+# ---------- JAX-Native CFR Step MEJORADO CON DEBUG ----------
 @jax.jit
 def _jitted_train_step(regrets, strategy, key):
     """
@@ -189,22 +318,40 @@ def _jitted_train_step(regrets, strategy, key):
                 # Calcular info set usando bucketing avanzado estilo Pluribus
                 info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
                 
-                # Calcular counterfactual values mejorados con evaluador real
+                # MEJORADO: Counterfactual values más realistas basados en hand strength
                 def cfv(a):
-                    # Usar evaluación más sofisticada basada en el motor elite
+                    # Obtener cartas del jugador para evaluación más realista
+                    hole_cards = game_results['hole_cards'][game_idx, player_idx]
+                    
+                    # Usar evaluador real del motor elite
+                    hand_strength = evaluate_hand_jax(hole_cards)
+                    
+                    # Base value usando payoff real del juego
                     base_value = payoff[player_idx]
                     
-                    # Factor de acción más realista usando lax.cond para JAX compatibility
+                    # Factor de acción más realista basado en hand strength
                     action_factor = lax.cond(
                         a == action,
-                        lambda: 1.0,
+                        lambda: 1.0,  # Acción real tomada
                         lambda: lax.cond(
                             a == 0,  # FOLD
-                            lambda: 0.2,
+                            lambda: lax.cond(
+                                hand_strength > 5000,  # Mano fuerte
+                                lambda: 0.1,  # Fold con mano fuerte es malo
+                                lambda: 0.8   # Fold con mano débil es bueno
+                            ),
                             lambda: lax.cond(
                                 (a == 1) | (a == 2),  # CHECK/CALL
-                                lambda: 0.6,
-                                lambda: 0.4  # BET/RAISE/ALL_IN
+                                lambda: lax.cond(
+                                    hand_strength > 5000,
+                                    lambda: 0.6,  # Check/call con mano fuerte es conservador
+                                    lambda: 0.4   # Check/call con mano débil es arriesgado
+                                ),
+                                lambda: lax.cond(  # BET/RAISE/ALL_IN
+                                    hand_strength > 5000,
+                                    lambda: 1.2,  # Apostar con mano fuerte es bueno
+                                    lambda: 0.2   # Apostar con mano débil es bluff
+                                )
                             )
                         )
                     )
@@ -466,6 +613,16 @@ class PokerTrainer:
         logger.info(f"   Snapshots en: {snapshot_iterations}")
         logger.info("\n⏳ Compilando función JIT (primera iteración será más lenta)...\n")
         
+        # NUEVO: Debug inicial de info sets
+        logger.info("\n🔍 EJECUTANDO DIAGNÓSTICO INICIAL...")
+        debug_specific_hands()
+        
+        # Generar datos de muestra para debug
+        debug_key = jax.random.PRNGKey(42)
+        debug_keys = jax.random.split(debug_key, 128)
+        debug_game_results = ege.batch_simulate(debug_keys)
+        debug_analysis = debug_info_set_distribution(self.strategy, debug_game_results)
+        
         import time
         start_time = time.time()
         
@@ -493,6 +650,16 @@ class PokerTrainer:
                     progress = 100 * self.iteration / num_iterations
                     logger.info(f"✓ Progreso: {progress:.0f}% ({self.iteration}/{num_iterations}) - {iter_time:.2f}s")
                 
+                # NUEVO: Debug intermedio en la mitad del entrenamiento
+                if self.iteration == num_iterations // 2:
+                    logger.info("\n🔍 DIAGNÓSTICO INTERMEDIO (50% completado)...")
+                    mid_game_results = ege.batch_simulate(jax.random.split(iter_key, 128))
+                    mid_analysis = debug_info_set_distribution(self.strategy, mid_game_results)
+                    
+                    # Comparar con estado inicial
+                    improvement = mid_analysis['unique_strategies'] - debug_analysis['unique_strategies']
+                    logger.info(f"📈 Cambio en diversidad: {improvement:+d} estrategias únicas")
+                
                 # Tomar snapshots del Poker IQ en iteraciones específicas
                 if self.iteration in snapshot_iterations:
                     poker_iq = evaluate_poker_intelligence(self.strategy, self.config)
@@ -518,6 +685,12 @@ class PokerTrainer:
         
         # Resumen final
         total_time = time.time() - start_time
+        
+        # NUEVO: Debug final completo
+        logger.info("\n🔍 DIAGNÓSTICO FINAL...")
+        final_keys = jax.random.split(jax.random.PRNGKey(99), 128)
+        final_game_results = ege.batch_simulate(final_keys)
+        final_analysis = debug_info_set_distribution(self.strategy, final_game_results)
         
         # Guardamos el modelo final
         final_path = f"{save_path}_final.pkl"
