@@ -90,7 +90,12 @@ class ProductionCUDAPokerCFR:
     
     def _load_cuda_library(self):
         """Load CUDA library with complete function signatures"""
-        lib_names = ["libpoker_cuda.so", "./libpoker_cuda.so"]
+        lib_names = [
+            "./poker_cuda/libpoker_cuda.so",  # Correct path from project root
+            "poker_cuda/libpoker_cuda.so",    # Alternative without ./
+            "libpoker_cuda.so",               # Fallback in current dir
+            "./libpoker_cuda.so"              # Fallback with ./
+        ]
         
         self.cuda_lib = None
         for lib_name in lib_names:
@@ -98,7 +103,8 @@ class ProductionCUDAPokerCFR:
                 self.cuda_lib = ctypes.CDLL(lib_name)
                 logger.info(f"✅ Loaded CUDA library: {lib_name}")
                 break
-            except OSError:
+            except OSError as e:
+                logger.debug(f"Failed to load {lib_name}: {e}")
                 continue
         
         if self.cuda_lib is None:
