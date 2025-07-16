@@ -20,7 +20,7 @@ class TrainerConfig:
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step (ESTRUCTURA FINAL) ----------
-@jax.jit
+@partial(jax.jit, static_argnums=(2,3,4))
 def _jitted_train_step(regrets: Array, strategy: Array, batch_size: int, num_actions: int, max_info_sets: int, key: Array):
     """
     Un paso de entrenamiento completo, compilado con JIT.
