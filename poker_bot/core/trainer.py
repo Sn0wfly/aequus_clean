@@ -84,24 +84,21 @@ class PokerTrainer:
 
     # ------------------------------------------------------------------ #
     def train_step(self, key: Array):
+        """
+        Versión de diagnóstico: Solo simula, no entrena.
+        El propósito es medir el rendimiento puro del motor de juego.
+        """
         # 1. Simulamos el batch con el motor JIT
         keys = jax.random.split(key, self.config.batch_size)
         payoffs, histories = fge.batch_play(keys)
+        
+        # Sincronizamos para asegurar que la computación en GPU ha terminado antes de medir el tiempo.
+        payoffs.block_until_ready()
+        
+        # logger.info(f"Diagnóstico: Simuladas {self.config.batch_size} partidas. El backtracking está deshabilitado.")
 
-        # 2. Backtracking en Python puro
-        indices, regrets = self._cfr_backtracking(
-            np.asarray(payoffs), np.asarray(histories))
-
-        # 3. Actualización vectorizada de regrets y estrategia
-        if indices.size == 0:
-            return
-
-        self.regrets = self.regrets.at[indices].add(jnp.asarray(regrets))
-
-        pos  = jnp.maximum(self.regrets[indices], 0.0)
-        norm = pos.sum(axis=1, keepdims=True)
-        norm = jnp.where(norm == 0, 1, norm)
-        self.strategy = self.strategy.at[indices].set(pos / norm)
+        # 2. Backtracking y actualización OMITIDOS para el diagnóstico.
+        pass
 
     # ------------------------------------------------------------------ #
     def save_model(self, path: str):
