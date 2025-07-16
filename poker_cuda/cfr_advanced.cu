@@ -229,6 +229,9 @@ __device__ void simulate_realistic_poker_game(
         game->player_active[i] = true;
     }
     
+    // Count active players
+    int active_players = MAX_PLAYERS;
+    
     // Deal hole cards
     bool used_cards[52] = {false};
     for (int player = 0; player < MAX_PLAYERS; player++) {
@@ -395,6 +398,12 @@ __device__ void simulate_realistic_poker_game(
     }
     
     // Final evaluation and payoffs
+    // Count current active players
+    int active_players = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (game->player_active[i]) active_players++;
+    }
+    
     if (active_players > 1) {
         // Showdown - evaluate all active hands
         float best_strength = -1.0f;
