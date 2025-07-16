@@ -165,62 +165,98 @@ def unified_batch_simulation(keys):
             """
             Genera acciones realistas basadas en contexto de poker
             """
-            # Usar key para randomización consistente
-            action_key = jax.random.fold_in(key2, action_idx * 6 + player_idx)
+            # AUMENTAR DIVERSIDAD: Usar múltiples fuentes de randomización
+            action_key = jax.random.fold_in(key2, action_idx * 37 + player_idx * 13 + street * 7)
             base_prob = jax.random.uniform(action_key)
             
-            # Clasificar hand strength
-            is_strong = hand_strength > 3000
-            is_medium = (hand_strength > 1500) & (hand_strength <= 3000)
-            is_weak = hand_strength <= 1500
+            # Segunda fuente de randomización para mayor entropía
+            entropy_key = jax.random.fold_in(key3, action_idx * 23 + player_idx * 19)
+            entropy_factor = jax.random.uniform(entropy_key) * 0.4 + 0.8  # 0.8-1.2 range
             
-            # Ajustar por posición (0=early, 5=late)
-            position_factor = lax.cond(
+            # Tercera fuente para variabilidad adicional
+            chaos_key = jax.random.fold_in(key1, action_idx * 41 + street * 17)
+            chaos_boost = jax.random.uniform(chaos_key) * 0.3  # 0-0.3 boost
+            
+            # Clasificar hand strength con más variabilidad
+            strength_threshold_1 = 2500 + jax.random.uniform(action_key) * 1000  # 2500-3500
+            strength_threshold_2 = 1200 + jax.random.uniform(entropy_key) * 600   # 1200-1800
+            
+            is_strong = hand_strength > strength_threshold_1
+            is_medium = (hand_strength > strength_threshold_2) & (hand_strength <= strength_threshold_1)
+            is_weak = hand_strength <= strength_threshold_2
+            
+            # Ajustar por posición con más variabilidad
+            position_base = lax.cond(
                 position <= 1,  # Early position
-                lambda: 0.7,    # Más conservador
+                lambda: 0.6,    # Más conservador
                 lambda: lax.cond(
                     position <= 3,  # Middle position
                     lambda: 1.0,    # Neutro
-                    lambda: 1.3     # Late position más agresivo
+                    lambda: 1.4     # Late position más agresivo
                 )
             )
             
-            # Probabilidades de acción basadas en hand strength
+            # Añadir noise a position factor
+            position_noise = jax.random.uniform(chaos_key) * 0.4 - 0.2  # -0.2 to +0.2
+            position_factor = jnp.clip(position_base + position_noise, 0.3, 2.0)
+            
+            # MÁXIMA DIVERSIDAD: Probabilidades más variables
+            adjusted_prob = base_prob * entropy_factor + chaos_boost
+            
+            # Probabilidades de acción con ALTA variabilidad
             action = lax.cond(
                 is_strong,
                 lambda: lax.cond(
-                    base_prob * position_factor < 0.2,
-                    lambda: 1,  # CHECK/CALL ocasional para pot control
+                    adjusted_prob * position_factor < 0.15,
+                    lambda: jax.random.randint(action_key, (), 0, 3),  # Random 0-2
                     lambda: lax.cond(
-                        base_prob * position_factor < 0.7,
-                        lambda: 3,  # BET/RAISE frecuente
-                        lambda: 4   # RAISE/ALL_IN agresivo
+                        adjusted_prob * position_factor < 0.6,
+                        lambda: jax.random.randint(entropy_key, (), 3, 6),  # Random 3-5
+                        lambda: lax.cond(
+                            adjusted_prob < 0.85,
+                            lambda: 4,  # RAISE
+                            lambda: 5   # ALL_IN
+                        )
                     )
                 ),
                 lambda: lax.cond(
                     is_medium,
                     lambda: lax.cond(
-                        base_prob / position_factor < 0.4,
-                        lambda: 1,  # CHECK/CALL frecuente
+                        adjusted_prob / position_factor < 0.3,
+                        lambda: jax.random.randint(action_key, (), 0, 4),  # Random 0-3
                         lambda: lax.cond(
-                            base_prob < 0.7,
-                            lambda: 2,  # CALL
+                            adjusted_prob < 0.75,
+                            lambda: jax.random.randint(entropy_key, (), 1, 4),  # Random 1-3
                             lambda: 3   # BET ocasional
                         )
                     ),
                     lambda: lax.cond(  # is_weak
-                        base_prob / position_factor < 0.6,
-                        lambda: 0,  # FOLD frecuente con manos débiles
+                        adjusted_prob / position_factor < 0.5,
+                        lambda: jax.random.randint(chaos_key, (), 0, 2),  # Random 0-1 (fold/check)
                         lambda: lax.cond(
-                            base_prob < 0.85,
-                            lambda: 1,  # CHECK/CALL ocasional
-                            lambda: 3   # Bluff ocasional en late position
+                            adjusted_prob < 0.8,
+                            lambda: jax.random.randint(action_key, (), 1, 3),  # Random 1-2
+                            lambda: lax.cond(
+                                position >= 4,  # Late position bluff
+                                lambda: jax.random.randint(entropy_key, (), 3, 6),  # Random 3-5
+                                lambda: 0  # Early position fold
+                            )
                         )
                     )
                 )
             )
             
-            return jnp.clip(action, 0, 5)
+            # EXTRA DIVERSIDAD: Ocasional acción completamente aleatoria
+            should_chaos = jax.random.uniform(chaos_key) < 0.1  # 10% de chaos total
+            chaos_action = jax.random.randint(chaos_key, (), 0, 6)
+            
+            final_action = lax.cond(
+                should_chaos,
+                lambda: chaos_action,
+                lambda: action
+            )
+            
+            return jnp.clip(final_action, 0, 5)
         
         # 4. SOLUCIÓN JAX-COMPATIBLE: Usar funciones fijas en lugar de loops variables
         def add_action_to_sequence(carry, i):
