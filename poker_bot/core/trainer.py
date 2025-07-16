@@ -28,16 +28,12 @@ def evaluate_hand_jax(cards_jax):
         """Use the REAL poker evaluator"""
         # Import here to avoid circular imports
         from poker_bot.core.full_game_engine import evaluate_hand_wrapper
-        import numpy as np
         
-        # Convert JAX array to numpy for the evaluator
-        cards_np = np.asarray(cards_jax)
-        
-        # Use pure_callback to call the real evaluator
+        # Use pure_callback directly with JAX array (no numpy conversion needed)
         strength = jax.pure_callback(
             evaluate_hand_wrapper,
             jax.ShapeDtypeStruct((), jnp.int32),
-            cards_np,
+            cards_jax,  # Pass JAX array directly
             vmap_method='sequential'
         )
         
