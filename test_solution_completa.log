@@ -1,0 +1,88 @@
+2025-07-16 03:13:00,927 - INFO - ================================================================================
+2025-07-16 03:13:00,944 - INFO - ================================================================================
+2025-07-16 03:13:00,944 - INFO - PROBLEMA: CFR entrenaba con historiales sintéticos
+2025-07-16 03:13:00,945 - INFO - SOLUCIÓN: CFR usa historiales reales del motor de juego
+2025-07-16 03:13:00,945 - INFO - ================================================================================
+2025-07-16 03:13:01,271 - INFO - --------------------------------------------------
+2025-07-16 03:13:01,293 - INFO - Unable to initialize backend 'tpu': UNIMPLEMENTED: LoadPjrtPlugin is not implemented on windows yet.
+2025-07-16 03:13:01,426 - INFO - ============================================================
+2025-07-16 03:13:01,427 - INFO - ============================================================
+2025-07-16 03:13:01,428 - INFO -    - Batch size: 128
+2025-07-16 03:13:01,428 - INFO -    - Num actions: 6
+2025-07-16 03:13:01,428 - INFO -    - Max info sets: 50,000
+2025-07-16 03:13:01,428 - INFO -    - Shape regrets: (50000, 6)
+2025-07-16 03:13:01,428 - INFO -    - Shape strategy: (50000, 6)
+2025-07-16 03:13:01,428 - INFO - ============================================================
+2025-07-16 03:13:01,444 - INFO - ============================================================
+2025-07-16 03:13:02,246 - INFO -    AA_mid: eval_info_set = 616
+2025-07-16 03:13:02,246 - INFO -    72o_mid: eval_info_set = 3016
+2025-07-16 03:13:02,246 - INFO -    JTs_late: eval_info_set = 7140
+2025-07-16 03:13:02,247 - INFO -    JTo_early: eval_info_set = 6450
+2025-07-16 03:13:02,410 - ERROR -    El entrenamiento NO funcionará correctamente con estos bugs.
+2025-07-16 03:13:02,410 - INFO - ============================================================
+2025-07-16 03:14:46,954 - INFO - ================================================================================
+2025-07-16 03:14:46,958 - INFO - ================================================================================
+2025-07-16 03:14:46,958 - INFO - PROBLEMA: CFR entrenaba con historiales sintéticos
+2025-07-16 03:14:46,959 - INFO - SOLUCIÓN: CFR usa historiales reales del motor de juego
+2025-07-16 03:14:46,959 - INFO - ================================================================================
+2025-07-16 03:14:47,244 - INFO - --------------------------------------------------
+2025-07-16 03:14:47,262 - INFO - Unable to initialize backend 'tpu': UNIMPLEMENTED: LoadPjrtPlugin is not implemented on windows yet.
+2025-07-16 03:14:47,348 - INFO - ============================================================
+2025-07-16 03:14:47,350 - INFO - ============================================================
+2025-07-16 03:14:47,350 - INFO -    - Batch size: 128
+2025-07-16 03:14:47,351 - INFO -    - Num actions: 6
+2025-07-16 03:14:47,351 - INFO -    - Max info sets: 50,000
+2025-07-16 03:14:47,351 - INFO -    - Shape regrets: (50000, 6)
+2025-07-16 03:14:47,351 - INFO -    - Shape strategy: (50000, 6)
+2025-07-16 03:14:47,351 - INFO - ============================================================
+2025-07-16 03:14:47,365 - INFO - ============================================================
+2025-07-16 03:14:47,531 - ERROR -    Mensaje: The __index__() method was called on traced array with shape int32[]
+This BatchTracer with object id 1972599689232 was created on line:
+  E:\Programacion\aequus_clean\poker_bot\core\trainer.py:239:23 (unified_batch_simulation.<locals>.simulate_single_game_with_real_actions)
+See https://docs.jax.dev/en/latest/errors.html#jax.errors.TracerIntegerConversionError
+2025-07-16 03:14:47,531 - ERROR - 
+Traceback completo:
+2025-07-16 03:14:47,531 - ERROR - Traceback (most recent call last):
+  File "E:\Programacion\aequus_clean\test_solution_completa.py", line 65, in main
+    validation_results = validate_training_data_integrity(
+        trainer.strategy,
+        validation_key,
+        verbose=True
+    )
+  File "E:\Programacion\aequus_clean\poker_bot\core\trainer.py", line 978, in validate_training_data_integrity
+    payoffs, histories, game_results = unified_batch_simulation(test_keys)
+                                       ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "E:\Programacion\aequus_clean\poker_bot\core\trainer.py", line 306, in unified_batch_simulation
+    full_results = jax.vmap(simulate_single_game_with_real_actions)(keys)
+  File "E:\Programacion\aequus_clean\poker_bot\core\trainer.py", line 240, in simulate_single_game_with_real_actions
+    for i in range(flop_actions):
+             ~~~~~^^^^^^^^^^^^^^
+jax.errors.TracerIntegerConversionError: The __index__() method was called on traced array with shape int32[]
+This BatchTracer with object id 1972599689232 was created on line:
+  E:\Programacion\aequus_clean\poker_bot\core\trainer.py:239:23 (unified_batch_simulation.<locals>.simulate_single_game_with_real_actions)
+See https://docs.jax.dev/en/latest/errors.html#jax.errors.TracerIntegerConversionError
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+
+2025-07-16 03:15:51,708 - INFO - ================================================================================
+2025-07-16 03:15:51,713 - INFO - ================================================================================
+2025-07-16 03:15:51,713 - INFO - PROBLEMA: CFR entrenaba con historiales sintéticos
+2025-07-16 03:15:51,713 - INFO - SOLUCIÓN: CFR usa historiales reales del motor de juego
+2025-07-16 03:15:51,713 - INFO - ================================================================================
+2025-07-16 03:15:52,029 - INFO - --------------------------------------------------
+2025-07-16 03:15:52,047 - INFO - Unable to initialize backend 'tpu': UNIMPLEMENTED: LoadPjrtPlugin is not implemented on windows yet.
+2025-07-16 03:15:52,148 - INFO - ============================================================
+2025-07-16 03:15:52,150 - INFO - ============================================================
+2025-07-16 03:15:52,150 - INFO -    - Batch size: 128
+2025-07-16 03:15:52,151 - INFO -    - Num actions: 6
+2025-07-16 03:15:52,151 - INFO -    - Max info sets: 50,000
+2025-07-16 03:15:52,151 - INFO -    - Shape regrets: (50000, 6)
+2025-07-16 03:15:52,151 - INFO -    - Shape strategy: (50000, 6)
+2025-07-16 03:15:52,151 - INFO - ============================================================
+2025-07-16 03:15:52,166 - INFO - ============================================================
+2025-07-16 03:15:52,665 - INFO -    AA_mid: eval_info_set = 616
+2025-07-16 03:15:52,665 - INFO -    72o_mid: eval_info_set = 3016
+2025-07-16 03:15:52,665 - INFO -    JTs_late: eval_info_set = 7140
+2025-07-16 03:15:52,665 - INFO -    JTo_early: eval_info_set = 6450
+2025-07-16 03:15:52,828 - ERROR -    El entrenamiento NO funcionará correctamente con estos bugs.
+2025-07-16 03:15:52,828 - INFO - ============================================================
