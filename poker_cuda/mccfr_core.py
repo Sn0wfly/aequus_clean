@@ -271,7 +271,8 @@ class ExternalSamplingMCCFR(MCCFRBase):
         return self.info_sets
     
     def _external_sampling_update(self, history: GameHistory, player: int, 
-                                reach_prob_player: float, reach_prob_others: float) -> float:
+                                reach_prob_player: float, reach_prob_others: float,
+                                depth: int = 0, max_depth: int = 100) -> float:
         """
         Recursive update for external sampling.
         
@@ -280,10 +281,17 @@ class ExternalSamplingMCCFR(MCCFRBase):
             player: Player being trained
             reach_prob_player: Probability player reaches this history
             reach_prob_others: Probability others reach this history
+            depth: Current recursion depth
+            max_depth: Maximum recursion depth to prevent infinite loops
             
         Returns:
             Expected utility for the player
         """
+        # Prevent infinite recursion
+        if depth >= max_depth:
+            # Return reasonable default utility if we hit depth limit
+            return 0.0
+            
         if history.is_terminal():
             return history.get_utility(player)
         
@@ -292,7 +300,7 @@ class ExternalSamplingMCCFR(MCCFRBase):
             action = history.sample_chance()
             child = history.create_child(action)
             return self._external_sampling_update(
-                child, player, reach_prob_player, reach_prob_others
+                child, player, reach_prob_player, reach_prob_others, depth + 1, max_depth
             )
         
         current_player = history.get_player()
@@ -309,7 +317,7 @@ class ExternalSamplingMCCFR(MCCFRBase):
                 action_utilities[action] = self._external_sampling_update(
                     child, player, 
                     reach_prob_player * info_set.strategy[action], 
-                    reach_prob_others
+                    reach_prob_others, depth + 1, max_depth
                 )
                 utility += info_set.strategy[action] * action_utilities[action]
             
@@ -335,7 +343,7 @@ class ExternalSamplingMCCFR(MCCFRBase):
             child = history.create_child(sampled_action)
             return self._external_sampling_update(
                 child, player, reach_prob_player, 
-                reach_prob_others * info_set.strategy[sampled_action]
+                reach_prob_others * info_set.strategy[sampled_action], depth + 1, max_depth
             )
 
 

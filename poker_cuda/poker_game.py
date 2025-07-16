@@ -146,8 +146,11 @@ class TexasHoldemHistory(GameHistory):
     
     def _find_next_player(self):
         """Find next player to act."""
-        # Start from small blind on preflop, first active player on later streets
-        start_player = 0 if self.betting_round == 0 else 0
+        # In heads-up poker:
+        # Preflop: Small blind (player 0) acts first after blinds are posted
+        # Postflop: Small blind (player 0) acts first
+        
+        start_player = 0  # Small blind always acts first in heads-up
         
         for i in range(self.num_players):
             player = (start_player + i) % self.num_players
@@ -269,21 +272,28 @@ class TexasHoldemHistory(GameHistory):
     
     def create_child(self, action: str) -> 'TexasHoldemHistory':
         """Create new history by taking an action."""
-        # Deep copy current state
-        new_history = TexasHoldemHistory(self.num_players, self.small_blind, 
-                                       self.big_blind, self.starting_stacks)
+        # Create new instance without calling __init__
+        new_history = object.__new__(TexasHoldemHistory)
         
-        # Copy all state
-        new_history.deck = PokerDeck()
+        # Copy basic attributes
+        new_history.num_players = self.num_players
+        new_history.small_blind = self.small_blind
+        new_history.big_blind = self.big_blind
+        new_history.starting_stacks = self.starting_stacks
+        
+        # Copy deck state
+        new_history.deck = object.__new__(PokerDeck)
         new_history.deck.cards = self.deck.cards.copy()
         new_history.deck.dealt_count = self.deck.dealt_count
         
+        # Copy game state
         new_history.hole_cards = [cards.copy() for cards in self.hole_cards]
         new_history.community_cards = self.community_cards.copy()
         new_history.action_history = self.action_history.copy()
         new_history.betting_round = self.betting_round
         new_history.current_player = self.current_player
         
+        # Copy betting state
         new_history.pot = self.pot
         new_history.stacks = self.stacks.copy()
         new_history.current_bets = self.current_bets.copy()
