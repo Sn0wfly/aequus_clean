@@ -653,13 +653,16 @@ void cuda_init_cfr_trainer_advanced(
 
 // Execute one advanced CFR training step
 void cuda_cfr_train_step_advanced(
-    void* d_regrets,        // Device regrets array
-    void* d_strategy,       // Device strategy array  
-    void* d_hole_cards,     // Device hole cards
-    void* d_community_cards,// Device community cards
-    void* d_payoffs,        // Device payoffs
-    int batch_size,         // Number of games to simulate
-    float learning_rate     // Learning rate for regret updates
+    void* d_regrets,         // Device regrets array
+    void* d_strategy,        // Device strategy array  
+    void* d_rand_states,     // Device random states
+    void* d_hole_cards,      // Device hole cards
+    void* d_community_cards, // Device community cards
+    void* d_payoffs,         // Device payoffs
+    void* d_action_histories,// Device action histories
+    void* d_pot_sizes,       // Device pot sizes
+    void* d_num_actions,     // Device number of actions
+    int batch_size           // Number of games to simulate
 ) {
     /*
     ADVANCED CFR TRAINING STEP
@@ -669,7 +672,7 @@ void cuda_cfr_train_step_advanced(
     3. Update strategy
     */
     
-    printf("🚀 Executing CFR step (batch: %d, lr: %.4f)\n", batch_size, learning_rate);
+    printf("🚀 Executing CFR step (batch: %d)\n", batch_size);
     
     // For now, this is a stub that demonstrates the interface
     // Real implementation would call the existing game simulation kernel

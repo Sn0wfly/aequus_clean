@@ -135,11 +135,14 @@ class ProductionCUDAPokerCFR:
                 self.cuda_lib.cuda_cfr_train_step_advanced.argtypes = [
                     ctypes.c_void_p,  # d_regrets
                     ctypes.c_void_p,  # d_strategy  
+                    ctypes.c_void_p,  # d_rand_states
                     ctypes.c_void_p,  # d_hole_cards
                     ctypes.c_void_p,  # d_community_cards
                     ctypes.c_void_p,  # d_payoffs
-                    ctypes.c_int,     # batch_size
-                    ctypes.c_float    # learning_rate
+                    ctypes.c_void_p,  # d_action_histories
+                    ctypes.c_void_p,  # d_pot_sizes
+                    ctypes.c_void_p,  # d_num_actions
+                    ctypes.c_int      # batch_size
                 ]
                 self.cuda_lib.cuda_cfr_train_step_advanced.restype = None
                 logger.info("✅ cuda_cfr_train_step_advanced configured")
@@ -148,6 +151,22 @@ class ProductionCUDAPokerCFR:
                 
         except Exception as e:
             logger.warning(f"⚠️ Failed to configure cuda_cfr_train_step_advanced: {e}")
+            
+        try:
+            # GPU initialization function
+            if hasattr(self.cuda_lib, 'cuda_init_cfr_trainer_advanced'):
+                self.cuda_lib.cuda_init_cfr_trainer_advanced.argtypes = [
+                    ctypes.POINTER(ctypes.c_void_p),  # device_ptrs array
+                    ctypes.c_int,                     # batch_size
+                    ctypes.c_ulonglong                # seed
+                ]
+                self.cuda_lib.cuda_init_cfr_trainer_advanced.restype = None
+                logger.info("✅ cuda_init_cfr_trainer_advanced configured")
+            else:
+                logger.warning("⚠️ cuda_init_cfr_trainer_advanced not found (optional)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to configure cuda_init_cfr_trainer_advanced: {e}")
             
         try:
             # Game simulation batch
@@ -198,11 +217,16 @@ class ProductionCUDAPokerCFR:
             ctypes.byref(self.d_num_actions)
         ]
         
+        # Convert to ctypes array
+        device_ptrs_array = (ctypes.c_void_p * len(device_ptrs))()
+        for i, ptr in enumerate(device_ptrs):
+            device_ptrs_array[i] = ctypes.cast(ptr, ctypes.c_void_p)
+        
         seed = int(time.time() * 1000) % (2**32)
         
         try:
             self.cuda_lib.cuda_init_cfr_trainer_advanced(
-                device_ptrs, self.config.batch_size, seed
+                device_ptrs_array, self.config.batch_size, seed
             )
             logger.info("✅ Advanced GPU memory initialized")
         except Exception as e:
