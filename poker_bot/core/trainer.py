@@ -20,24 +20,15 @@ class TrainerConfig:
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step ----------
-@partial(jax.jit, static_argnums=(3, 4, 5))
-def _jitted_train_step(regrets, strategy, key, num_actions, max_info_sets, batch_size):
-    """
-    CFR real sin bucles Python.
-    1. Simula batch
-    2. Reconstruye trayectorias
-    3. Actualiza regrets y estrategia
-    """
-    # Verificar shapes
-    assert regrets.shape == (max_info_sets, num_actions), f"Expected ({max_info_sets}, {num_actions}), got {regrets.shape}"
-    assert strategy.shape == (max_info_sets, num_actions), f"Expected ({max_info_sets}, {num_actions}), got {strategy.shape}"
-    
-    keys = jax.random.split(key, batch_size)
+@jax.jit
+def _jitted_train_step(regrets, strategy, key):
+    cfg = TrainerConfig()
+    keys = jax.random.split(key, cfg.batch_size)
     payoffs, histories = fge.batch_play(keys)
 
     def game_step(carry, step_idx):
         regrets, strategy = carry
-        # Por cada juego y paso
+        # Actualización acumulada sobre todo el batch
         def one_game(batch_idx):
             payoff = payoffs[batch_idx]
             history = histories[batch_idx]
@@ -46,7 +37,6 @@ def _jitted_train_step(regrets, strategy, key, num_actions, max_info_sets, batch
 
             def do_update():
                 state = fge.initial_state_for_idx(batch_idx)
-                # Reconstruir hasta step_idx
                 state = lax.fori_loop(
                     0, step_idx + 1,
                     lambda i, s: lax.cond(
@@ -62,35 +52,26 @@ def _jitted_train_step(regrets, strategy, key, num_actions, max_info_sets, batch
 
                 def cfv(a):
                     return lax.cond(legal[a], lambda: payoff[player_idx], lambda: 0.0)
-                cfv_all = jax.vmap(cfv)(jnp.arange(num_actions))
+                cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
                 regret_delta = cfv_all - cfv_all[action]
 
-                info_set_idx = jnp.mod(player_idx, max_info_sets).astype(jnp.int32)
+                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
                 new_regrets = regrets.at[info_set_idx].add(regret_delta)
                 pos = jnp.maximum(new_regrets[info_set_idx], 0.0)
                 norm = jnp.sum(pos)
-                new_strat = jnp.where(norm > 0, pos / norm, jnp.ones(num_actions) / num_actions)
+                new_strat = jnp.where(norm > 0, pos / norm, jnp.ones(cfg.num_actions) / cfg.num_actions)
                 new_strategy = strategy.at[info_set_idx].set(new_strat)
                 return new_regrets, new_strategy
 
             return lax.cond(valid, do_update, lambda: (regrets, strategy))
 
-        # Ejecutar para todos los juegos del batch y reducir los resultados
-        batch_results = jax.vmap(one_game)(jnp.arange(batch_size))
-        batch_regrets, batch_strategies = batch_results
-        
-        # Acumular todos los updates del batch
-        # Sumar todos los cambios de regrets
-        regret_updates = batch_regrets - regrets[None, :, :]  # Shape: (batch_size, max_info_sets, num_actions)
-        strategy_updates = batch_strategies - strategy[None, :, :]  # Shape: (batch_size, max_info_sets, num_actions)
-        
-        # Sumar todos los updates
-        total_regret_update = jnp.sum(regret_updates, axis=0)  # Shape: (max_info_sets, num_actions)
-        total_strategy_update = jnp.sum(strategy_updates, axis=0)  # Shape: (max_info_sets, num_actions)
-        
-        final_regrets = regrets + total_regret_update
-        final_strategy = strategy + total_strategy_update
-        
+        # Acumular sobre todo el batch
+        new_regrets, new_strategy = jax.vmap(one_game)(jnp.arange(cfg.batch_size))
+        # Reducir con suma para mantener shape (max_info_sets, num_actions)
+        delta_regrets = jnp.sum(new_regrets - regrets, axis=0)
+        delta_strategy = jnp.sum(new_strategy - strategy, axis=0)
+        final_regrets = regrets + delta_regrets
+        final_strategy = strategy + delta_strategy
         return (final_regrets, final_strategy), None
 
     final_regrets, final_strategy = lax.scan(
@@ -116,12 +97,9 @@ class PokerTrainer:
             self.iteration += 1
             iter_key = jax.random.fold_in(key, self.iteration)
             self.regrets, self.strategy = _jitted_train_step(
-                self.regrets, 
-                self.strategy, 
-                iter_key,
-                self.config.num_actions,
-                self.config.max_info_sets,
-                self.config.batch_size
+                self.regrets,
+                self.strategy,
+                iter_key
             )
             self.regrets.block_until_ready()
             logger.info(f"Iteración {self.iteration} completada.")
