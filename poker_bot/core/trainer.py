@@ -355,29 +355,39 @@ def _jitted_train_step(regrets, strategy, key):
                     # Base value usando payoff real del juego
                     base_value = payoff[player_idx]
                     
-                    # Factor de acción más realista basado en hand strength
+                    # SIMPLIFICADO: CFR más directo con señales claras
+                    # Clasificar mano en 3 categorías simples
+                    is_strong = hand_strength > 2000   # Manos fuertes (pairs, high cards)
+                    is_weak = hand_strength < 1000     # Manos muy débiles
+                    # is_medium para el resto (1000-2000)
+                    
+                    # Factor de acción MUY simplificado y directo
                     action_factor = lax.cond(
                         a == action,
-                        lambda: 1.0,  # Acción real tomada
+                        lambda: 1.0,  # Acción real tomada = neutro
                         lambda: lax.cond(
                             a == 0,  # FOLD
                             lambda: lax.cond(
-                                hand_strength > 5000,  # Mano fuerte
-                                lambda: 0.1,  # Fold con mano fuerte es malo
-                                lambda: 0.8   # Fold con mano débil es bueno
+                                is_strong,
+                                lambda: 0.3,  # Fold con mano fuerte = malo (pero no extremo)
+                                lambda: lax.cond(
+                                    is_weak,
+                                    lambda: 1.4,  # Fold con mano débil = bueno
+                                    lambda: 1.0   # Fold con mano media = neutro
+                                )
                             ),
                             lambda: lax.cond(
-                                (a == 1) | (a == 2),  # CHECK/CALL
+                                (a >= 3),  # BET/RAISE/ALL_IN (acciones agresivas)
                                 lambda: lax.cond(
-                                    hand_strength > 5000,
-                                    lambda: 0.6,  # Check/call con mano fuerte es conservador
-                                    lambda: 0.4   # Check/call con mano débil es arriesgado
+                                    is_strong,
+                                    lambda: 1.3,  # Apostar con mano fuerte = bueno
+                                    lambda: lax.cond(
+                                        is_weak,
+                                        lambda: 0.4,  # Apostar con mano débil = malo
+                                        lambda: 1.0   # Apostar con mano media = neutro
+                                    )
                                 ),
-                                lambda: lax.cond(  # BET/RAISE/ALL_IN
-                                    hand_strength > 5000,
-                                    lambda: 1.2,  # Apostar con mano fuerte es bueno
-                                    lambda: 0.2   # Apostar con mano débil es bluff
-                                )
+                                lambda: 1.0  # CHECK/CALL = siempre neutro
                             )
                         )
                     )
