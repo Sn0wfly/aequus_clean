@@ -21,7 +21,7 @@ class TrainerConfig:
     max_info_sets: int = 50_000
 
 # ---------- JAX-Native CFR Step (ESTRUCTURA FINAL) ----------
-@partial(jax.jit, static_argnums=(2,3,4))
+@partial(jax.jit, static_argnums=(2,3,4,5))
 def _jitted_train_step(regrets: Array, strategy: Array, batch_size: int, num_actions: int, max_info_sets: int, key: Array):
     """
     CFR verdadero implementado completamente en JAX.
@@ -58,63 +58,65 @@ def _jitted_train_step(regrets: Array, strategy: Array, batch_size: int, num_act
         payoff = payoffs[batch_idx]
         history = histories[batch_idx]
         
-        # Encontrar el último paso válido
-        valid_steps = jnp.where(history != -1, jnp.arange(len(history)), -1)
-        max_step = jnp.max(valid_steps)
-        
-        def process_step(step_idx):
-            if step_idx > max_step:
-                return regrets, strategy
+        # Usar longitud fija en lugar de max_step dinámico
+        def process_step(carry, step_idx):
+            regrets, strategy = carry
             
-            # Reconstruir estado hasta este paso
-            state = reconstruct_state(batch_idx, step_idx)
-            action = history[step_idx]
-            player_idx = state.cur_player[0]
+            # Verificar si este paso es válido
+            is_valid = (step_idx < fge.MAX_GAME_LENGTH) & (history[step_idx] != -1)
             
-            if action == -1:
-                return regrets, strategy
-            
-            # Calcular counterfactual values para todas las acciones
-            legal_actions = fge.get_legal_actions(state)
-            
-            def calc_action_value(action_idx):
-                return lax.cond(
-                    legal_actions[action_idx],
-                    lambda: action_value(state, action_idx, player_idx, payoff),
-                    lambda: 0.0
+            def do_process():
+                # Reconstruir estado hasta este paso
+                state = reconstruct_state(batch_idx, step_idx)
+                action = history[step_idx]
+                player_idx = state.cur_player[0]
+                
+                # Calcular counterfactual values para todas las acciones
+                legal_actions = fge.get_legal_actions(state)
+                
+                def calc_action_value(action_idx):
+                    return lax.cond(
+                        legal_actions[action_idx],
+                        lambda: action_value(state, action_idx, player_idx, payoff),
+                        lambda: 0.0
+                    )
+                
+                action_values = jax.vmap(calc_action_value)(jnp.arange(num_actions))
+                
+                # Calcular regrets usando Regret-Matching
+                played_value = action_values[action]
+                regrets_delta = jnp.where(
+                    legal_actions,
+                    action_values - played_value,
+                    0.0
                 )
+                
+                # Actualizar regrets para este info set (usando player_idx como hash simple)
+                info_set_idx = player_idx % max_info_sets
+                new_regrets = regrets.at[info_set_idx].add(regrets_delta)
+                
+                # Actualizar estrategia usando Regret-Matching
+                positive_regrets = jnp.maximum(new_regrets[info_set_idx], 0.0)
+                sum_pos_regrets = jnp.sum(positive_regrets)
+                new_strategy_probs = jnp.where(
+                    sum_pos_regrets > 0,
+                    positive_regrets / sum_pos_regrets,
+                    jnp.ones(num_actions) / num_actions
+                )
+                new_strategy = strategy.at[info_set_idx].set(new_strategy_probs)
+                
+                return new_regrets, new_strategy
             
-            action_values = jax.vmap(calc_action_value)(jnp.arange(num_actions))
+            def skip_process():
+                return regrets, strategy
             
-            # Calcular regrets usando Regret-Matching
-            played_value = action_values[action]
-            regrets_delta = jnp.where(
-                legal_actions,
-                action_values - played_value,
-                0.0
-            )
-            
-            # Actualizar regrets para este info set (usando player_idx como hash simple)
-            info_set_idx = player_idx % max_info_sets
-            new_regrets = regrets.at[info_set_idx].add(regrets_delta)
-            
-            # Actualizar estrategia usando Regret-Matching
-            positive_regrets = jnp.maximum(new_regrets[info_set_idx], 0.0)
-            sum_pos_regrets = jnp.sum(positive_regrets)
-            new_strategy_probs = jnp.where(
-                sum_pos_regrets > 0,
-                positive_regrets / sum_pos_regrets,
-                jnp.ones(num_actions) / num_actions
-            )
-            new_strategy = strategy.at[info_set_idx].set(new_strategy_probs)
-            
-            return new_regrets, new_strategy
+            return lax.cond(is_valid, do_process, skip_process)
         
-        # Procesar todos los pasos del juego
+        # Procesar todos los pasos del juego con longitud fija
         final_regrets, final_strategy = lax.scan(
-            lambda carry, step_idx: process_step(step_idx),
+            process_step,
             (regrets, strategy),
-            jnp.arange(max_step + 1)
+            jnp.arange(fge.MAX_GAME_LENGTH)
         )[0]
         
         return final_regrets, final_strategy
