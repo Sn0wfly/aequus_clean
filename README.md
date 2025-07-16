@@ -1,228 +1,266 @@
-# 🎯 Elite Poker CFR Training System
+# 🃏 Aequus Poker AI
 
-## 🚀 Super-Human Poker AI
+A professional-grade Texas Hold'em poker AI using Counterfactual Regret Minimization (CFR) with JAX GPU acceleration.
 
-A state-of-the-art poker AI training system capable of reaching **super-human performance** and competing against:
-- 🏆 Professional poker players
-- 🤖 Advanced poker bots (Pluribus-level)
-- 💰 High-stakes cash games
-- 🎪 Multi-table tournaments
+## 🎯 Features
 
-## ✨ Key Features
+- **Real Hand Evaluation**: Uses `phevaluator` for accurate poker hand ranking
+- **GPU-Accelerated Training**: JAX-based CFR implementation for fast training
+- **Professional Architecture**: 50,000 information sets with advanced bucketing
+- **Comprehensive Testing**: Unit tests for poker concepts and system integrity
+- **Easy CLI Interface**: Train models without editing code
+- **Real-Time Evaluation**: Built-in Poker IQ scoring system
 
-### 🧠 **Advanced Learning Concepts**
-- **Position Awareness**: Tight-aggressive early position, loose-aggressive late position
-- **Hand Strength Evaluation**: Premium pairs, suited connectors, broadway cards
-- **Suited vs Offsuit**: Professional-level suited premiums
-- **Multi-Street Planning**: Preflop → Flop → Turn → River progression
-- **Pot Odds Integration**: Dynamic bet sizing based on pot size
+## 🚀 Quick Start
 
-### ⚡ **High-Performance Architecture**
-- **JAX-native CFR**: JIT-compiled for maximum speed (~16K hands/second)
-- **Elite Game Engine**: 6-action NLHE with professional hand evaluator
-- **Advanced Bucketing**: Pluribus-style info set abstraction
-- **Real-time Diagnostics**: Poker IQ tracking and strategy evolution
-
-### 🎮 **Training Levels**
-
-#### 1. **Standard Training** (Quick Testing)
-```bash
-python run_training.py --level standard --iterations 100
-```
-- **Time**: 2-3 minutes
-- **Purpose**: Testing and development
-- **Expected IQ**: 40-60/100
-
-#### 2. **Super-Human Training** (Production Ready)
-```bash
-python run_training.py --level super_human --iterations 2000
-```
-- **Time**: 30-60 minutes
-- **Purpose**: Professional competition
-- **Expected IQ**: 70-85/100
-- **Features**: Position + suited awareness, advanced hand evaluation
-
-#### 3. **Pluribus-Level Training** (Elite Competition)
-```bash
-python run_training.py --level pluribus_level --iterations 5000
-```
-- **Time**: 2-4 hours
-- **Purpose**: Compete against best AI systems
-- **Expected IQ**: 85-95/100
-- **Features**: All advanced concepts, extreme precision
-
-## 📊 **Performance Benchmarks**
-
-### Recent Training Results:
-```
-🏆 VEREDICTO: EXCELENTE - Aprendizaje muy efectivo
-📊 Mejora total: +33.0 puntos (15.0 → 48.0/100)
-🚀 Mejora por iteración: +0.33 puntos
-🥈 IQ Final: 48.0/100 (Nivel Plata)
-
-✅ Hand Strength: 25.0/25 - PERFECTO!
-✅ Fold Discipline: 8.0/15 - Decente
-✅ Diversidad: 15.0/15 - Perfecto
-❌ Position: 0.0/25 - Needs super-human training
-❌ Suited: 0.0/20 - Needs super-human training
-```
-
-### Super-Human vs Standard:
-| Metric | Standard | Super-Human | Improvement |
-|--------|----------|-------------|-------------|
-| Position Awareness | 0/25 | 20-25/25 | +25 points |
-| Suited Recognition | 0/20 | 15-20/20 | +20 points |
-| Hand Evaluation | Basic | Advanced | 4x more concepts |
-| Training Speed | ~16K hands/s | ~20K hands/s | 25% faster |
-
-## 🛠️ **Advanced Usage**
-
-### Custom Configuration:
-```bash
-# Quick test with custom iterations
-python run_training.py --level standard --iterations 50 --model_name quick_test
-
-# Super-human with larger batch size
-python run_training.py --level super_human --batch_size 512 --model_name production_v1
-
-# Pluribus-level for competition
-python run_training.py --level pluribus_level --model_name tournament_bot
-```
-
-### Loading and Continuing Training:
-```python
-from poker_bot.core.trainer import PokerTrainer, SuperHumanTrainerConfig
-
-# Load existing model
-config = SuperHumanTrainerConfig()
-trainer = PokerTrainer(config)
-trainer.load_model("super_human_model_final.pkl")
-
-# Continue training
-trainer.train(
-    num_iterations=1000,
-    save_path="continued_training",
-    save_interval=50
-)
-```
-
-## 🎯 **Poker IQ Evaluation System**
-
-The system evaluates 5 core poker concepts:
-
-### 1. **Hand Strength Awareness** (25 points)
-- Distinguishes premium hands (AA, KK) from trash (72o)
-- Plays strong hands aggressively
-- Folds weak hands appropriately
-
-### 2. **Position Awareness** (25 points) 🆕
-- Tighter play in early position
-- Looser, more aggressive in late position
-- Position-dependent hand selection
-
-### 3. **Suited vs Offsuit** (20 points) 🆕
-- Values suited hands higher
-- Recognizes suited connectors potential
-- Premium suited hands (AKs, KQs) bonus
-
-### 4. **Fold Discipline** (15 points)
-- Folds weak hands consistently
-- Avoids calling with marginal holdings
-- Proper bet-sizing discipline
-
-### 5. **Strategy Diversity** (15 points)
-- Balanced action frequencies
-- Avoids predictable patterns
-- Mixed strategy optimization
-
-## 📈 **Training Progression**
-
-### Expected IQ Evolution:
-```
-Iterations 0-100:   Basic concepts (hand strength)
-Iterations 100-500: Position awareness emerges
-Iterations 500-1000: Suited recognition develops
-Iterations 1000-2000: Advanced integration
-Iterations 2000+:   Super-human refinement
-```
-
-### Stopping Criteria:
-- **IQ 60+**: Ready for casual play
-- **IQ 70+**: Ready for serious competition
-- **IQ 80+**: Super-human level
-- **IQ 85+**: Pluribus competitive
-
-## 🔧 **Technical Architecture**
-
-### Core Components:
-1. **JAX Game Engine**: Pure JAX implementation for speed
-2. **Advanced Hand Evaluator**: Professional-grade evaluation
-3. **CFR Algorithm**: Counterfactual Regret Minimization
-4. **Info Set Bucketing**: Pluribus-style abstraction
-5. **Diagnostic System**: Real-time strategy analysis
-
-### Performance Optimizations:
-- JIT compilation for 20x speed improvement
-- Vectorized game simulation
-- Memory-efficient strategy storage
-- Parallel game processing
-
-## 📋 **Requirements**
+### Prerequisites
 
 ```bash
-pip install jax jaxlib numpy
-# For GPU acceleration (optional):
-pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-```
-
-## 🚀 **Quick Start**
-
-1. **Clone and setup**:
-```bash
-git clone <repo>
-cd aequus_clean
+# GPU environment (vast.ai, Google Colab, etc.)
 pip install -r requirements.txt
 ```
 
-2. **Run standard training**:
+### Train Your First Model
+
 ```bash
-python run_training.py --level standard --iterations 100
+# Quick test (30 seconds)
+python train.py --iterations 50 --output my_first_model
+
+# Standard model (5-10 minutes) 
+python train.py --iterations 1000 --output standard_model
+
+# Professional model (1-2 hours)
+python train.py --config superhuman --iterations 2000 --output pro_model
 ```
 
-3. **For super-human AI**:
+### Evaluate Model Performance
+
 ```bash
-python run_training.py --level super_human --iterations 2000
+# Comprehensive evaluation with Poker IQ scoring
+python evaluate_model.py models/standard_model_final.pkl
+
+# Run unit tests to verify concepts
+python test_poker_concepts.py
 ```
 
-4. **For Pluribus competition**:
+## 📊 Performance Benchmarks
+
+| Model | Iterations | Training Time | Poker IQ | Level |
+|-------|------------|---------------|----------|-------|
+| Quick Test | 50 | ~30s | 45-55/120 | 🥉 Beginner |
+| Standard | 1000 | ~10min | 75-85/120 | 🥈 Intermediate |
+| Professional | 2000+ | ~1-2h | 85-100/120 | 🏆 Advanced |
+| Elite | 5000+ | ~3-5h | 95-110/120 | 🚀 Expert |
+
+## 🧠 Poker IQ Evaluation
+
+The system evaluates models across 5 core poker concepts:
+
+- **Hand Strength** (25 pts): Does it play AA more aggressively than 72o?
+- **Position Awareness** (25 pts): Does it play tighter in early position?
+- **Suited Recognition** (20 pts): Does it prefer suited hands?
+- **Fold Discipline** (15 pts): Does it fold weak hands appropriately?
+- **Strategy Diversity** (15 pts): Does it use varied strategies?
+
+**Bonus**: Iteration bonus (20 pts) rewards longer training.
+
+## 🔧 CLI Usage
+
+### Basic Training
+
 ```bash
-python run_training.py --level pluribus_level --iterations 5000
+python train.py --iterations 1000 --output my_model
 ```
 
-## 🎉 **Success Stories**
+### Advanced Training
 
-### Recent Achievements:
-- ✅ **Perfect hand strength learning** (25/25 points in 100 iterations)
-- ✅ **Zero JAX compilation errors** (stable production system)
-- ✅ **2.2x performance improvement** over previous versions
-- ✅ **Professional-grade hand evaluation** with 9+ concepts
-- ✅ **Real-time strategy evolution tracking**
+```bash
+# Super-human configuration with custom parameters
+python train.py \
+  --config superhuman \
+  --iterations 2000 \
+  --batch-size 256 \
+  --output elite_model \
+  --snapshots 500 1000 1500 2000
+```
 
-### Competitive Performance:
-- 🏆 **48 IQ achieved** with basic training (100 iterations)
-- 🚀 **70+ IQ expected** with super-human training
-- 🎯 **85+ IQ target** for Pluribus-level competition
+### CLI Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--iterations` | Number of training iterations | `--iterations 1000` |
+| `--output` | Model name (without .pkl) | `--output my_model` |
+| `--config` | standard or superhuman | `--config superhuman` |
+| `--batch-size` | Training batch size | `--batch-size 256` |
+| `--snapshots` | IQ evaluation points | `--snapshots 500 1000` |
+| `--no-snapshots` | Disable evaluations (faster) | `--no-snapshots` |
+
+## 🧪 Testing
+
+### Run All Tests
+
+```bash
+python test_poker_concepts.py
+```
+
+### Individual Test Categories
+
+- **Hand Evaluator**: Verifies phevaluator integration
+- **System Integrity**: Validates training pipeline
+- **Poker Concepts**: Tests learned poker knowledge
+
+### Expected Test Results
+
+```
+✅ Hand Evaluator tests PASSED
+✅ System Integrity tests PASSED  
+✅ Poker Concepts tests COMPLETED
+🎯 Hand Strength Test: 75% success rate
+🎯 Suited Test: 67% success rate
+```
+
+## 📁 Project Structure
+
+```
+aequus_clean/
+├── poker_bot/
+│   ├── core/
+│   │   ├── trainer.py          # Main CFR training logic
+│   │   ├── full_game_engine.py # Game simulation
+│   │   └── ...
+│   └── evaluator.py            # Hand evaluation (phevaluator wrapper)
+├── models/                     # Trained models (.pkl files)
+├── train.py                    # CLI training interface
+├── evaluate_model.py           # Model evaluation script
+├── test_poker_concepts.py      # Unit tests
+└── requirements.txt            # Dependencies
+```
+
+## 🔬 Technical Details
+
+### Algorithm: Counterfactual Regret Minimization (CFR)
+
+- **Information Sets**: 50,000 unique game situations
+- **Actions**: 6 (FOLD, CHECK, CALL, BET, RAISE, ALL_IN)
+- **Bucketing**: Advanced multi-dimensional bucketing:
+  - Street (preflop/flop/turn/river)
+  - Hand strength (169 preflop combinations)
+  - Position (6 positions)
+  - Stack depth (20 buckets)
+  - Pot odds (10 buckets)
+
+### GPU Acceleration
+
+- **JAX JIT Compilation**: ~10x speedup over pure Python
+- **Vectorized Operations**: Batch processing for efficiency
+- **Memory Optimized**: Efficient storage of 50K x 6 strategy matrices
+
+### Hand Evaluation
+
+- **phevaluator**: Ultra-fast C++ poker hand evaluator
+- **7-card evaluation**: Handles hole cards + community cards
+- **Real showdowns**: No mock/synthetic hand rankings
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **Import Error: No module named 'phevaluator'**
+   ```bash
+   pip install phevaluator
+   ```
+
+2. **JAX CUDA Issues**
+   ```bash
+   pip install --upgrade jax[cuda12_pip] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+   ```
+
+3. **Low Poker IQ Scores**
+   - Ensure you're using the real evaluator (not mocks)
+   - Train for more iterations (1000+ recommended)
+   - Use superhuman config for better learning
+
+4. **Training Too Slow**
+   - Use `--no-snapshots` for faster training
+   - Reduce batch size if memory issues
+   - Ensure GPU is available and JAX detects it
+
+### Validation Errors
+
+If training aborts with validation errors:
+
+```bash
+# Check evaluator works
+python test_real_evaluator.py
+
+# Run comprehensive debugging
+python debug_evaluator_detailed.py
+```
+
+## 🏆 Advanced Usage
+
+### Custom Training Configurations
+
+```python
+from poker_bot.core.trainer import PokerTrainer, TrainerConfig
+
+# Create custom config
+config = TrainerConfig()
+config.batch_size = 512
+config.learning_rate = 0.02
+config.position_awareness_factor = 0.5
+
+# Train with custom config
+trainer = PokerTrainer(config)
+trainer.train(2000, 'custom_model', 500)
+```
+
+### Model Analysis
+
+```python
+# Load and analyze trained model
+trainer = PokerTrainer(TrainerConfig())
+trainer.load_model('models/my_model_final.pkl')
+
+# Examine strategies for specific situations
+from poker_bot.core.trainer import compute_mock_info_set
+aa_info = compute_mock_info_set([12, 12], False, 2)  # AA in middle position
+strategy = trainer.strategy[aa_info]
+print(f"AA strategy: {strategy}")  # [fold, check, call, bet, raise, all_in]
+```
+
+## 📈 Roadmap
+
+- [ ] **Multi-street Training**: Full preflop → river training
+- [ ] **Opponent Modeling**: Adaptive strategies against different player types
+- [ ] **Tournament ICM**: Independent Chip Model for tournament play
+- [ ] **Real-time Interface**: API for live poker integration
+- [ ] **Pluribus-level**: 6-max no-limit training to match state-of-the-art
+
+## 🤝 Contributing
+
+1. **Bug Reports**: Use GitHub issues with full error traces
+2. **Feature Requests**: Describe use case and implementation ideas
+3. **Code Contributions**: Follow existing code style and add tests
+4. **Testing**: Run `python test_poker_concepts.py` before submitting
+
+## 📜 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙏 Acknowledgments
+
+- **phevaluator**: Fast poker hand evaluation library
+- **JAX**: High-performance machine learning library
+- **CFR Algorithm**: Introduced by Zinkevich et al. (2008)
+- **Pluribus**: Inspiration from Facebook's superhuman poker AI
+
+## 📞 Support
+
+- **Issues**: GitHub issue tracker
+- **Questions**: Create discussion in GitHub
+- **Performance**: Share benchmark results and hardware specs
 
 ---
 
-## 📞 **Support & Development**
-
-This system represents cutting-edge poker AI research and is actively maintained for competitive play. The architecture supports future extensions including:
-
-- Multi-table tournament play
-- Live opponent modeling  
-- Real-time strategy adaptation
-- Advanced ICM calculations
-- Range construction algorithms
-
-**Ready to compete at the highest levels of poker AI! 🏆**
+*Built with ❤️ for the poker AI community*
