@@ -75,7 +75,23 @@ def _jitted_train_step(regrets, strategy, key, num_actions, max_info_sets, batch
 
             return lax.cond(valid, do_update, lambda: (regrets, strategy))
 
-        return jax.vmap(one_game)(jnp.arange(batch_size)), None
+        # Ejecutar para todos los juegos del batch y reducir los resultados
+        batch_results = jax.vmap(one_game)(jnp.arange(batch_size))
+        batch_regrets, batch_strategies = batch_results
+        
+        # Acumular todos los updates del batch
+        # Sumar todos los cambios de regrets
+        regret_updates = batch_regrets - regrets[None, :, :]  # Shape: (batch_size, max_info_sets, num_actions)
+        strategy_updates = batch_strategies - strategy[None, :, :]  # Shape: (batch_size, max_info_sets, num_actions)
+        
+        # Sumar todos los updates
+        total_regret_update = jnp.sum(regret_updates, axis=0)  # Shape: (max_info_sets, num_actions)
+        total_strategy_update = jnp.sum(strategy_updates, axis=0)  # Shape: (max_info_sets, num_actions)
+        
+        final_regrets = regrets + total_regret_update
+        final_strategy = strategy + total_strategy_update
+        
+        return (final_regrets, final_strategy), None
 
     final_regrets, final_strategy = lax.scan(
         game_step,
