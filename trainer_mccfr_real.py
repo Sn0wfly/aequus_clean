@@ -32,8 +32,8 @@ class MCCFRConfig:
     exploration: float = 0.6  # ε-greedy para exploration
 
 # ---------- MCCFR Outcome Sampling REAL ----------
-@jax.jit(static_argnames=['batch_size', 'num_actions', 'max_info_sets', 'exploration'])
-def _mccfr_step(regrets, strategy, key, batch_size, num_actions, max_info_sets, exploration):
+@jax.jit
+def _mccfr_step(regrets, strategy, key):
     """
     Monte Carlo CFR (outcome sampling) - IMPLEMENTACIÓN REAL
     
@@ -42,6 +42,12 @@ def _mccfr_step(regrets, strategy, key, batch_size, num_actions, max_info_sets, 
     3. Actualiza regrets basándose solo en payoffs finales
     4. SIN lógica hardcodeada de poker
     """
+    # Hardcoded config values for JAX compatibility
+    batch_size = 128
+    num_actions = 6
+    max_info_sets = 50_000
+    exploration = 0.6
+    
     keys = jax.random.split(key, batch_size)
     
     # 1. Simular juegos completos usando nuestro motor real
@@ -213,9 +219,7 @@ class MCCFRTrainer:
             
             # Un paso de MCCFR
             self.regrets, self.strategy = _mccfr_step(
-                self.regrets, self.strategy, subkey,
-                self.cfg.batch_size, self.cfg.num_actions, 
-                self.cfg.max_info_sets, self.cfg.exploration
+                self.regrets, self.strategy, subkey
             )
             
             # Esperar a que termine la computación GPU
