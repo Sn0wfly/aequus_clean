@@ -55,7 +55,7 @@ def elite_batch_play(keys):
     payoffs = game_results['payoffs']
     
     # Construir historias sintéticas basadas en los resultados del juego
-    # Por ahora usamos una historia simplificada hasta que implementemos el historial completo
+    # Por ahora usamos una historia simplificada hasta que implementemos el historial completo.
     batch_size = payoffs.shape[0]
     max_history_length = 60
     
