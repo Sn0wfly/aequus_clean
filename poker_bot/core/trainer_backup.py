@@ -6,177 +6,38 @@ import logging
 import pickle
 import os
 from dataclasses import dataclass
-from . import jax_game_engine as ege  # CAMBIADO: motor elite en lugar de full_game_engine
-from poker_bot.evaluator import HandEvaluator  # AGREGADO: evaluador real
+from . import full_game_engine as fge
 from jax import Array
 from functools import partial
 from jax import lax
-from jax import ShapeDtypeStruct
 
 logger = logging.getLogger(__name__)
-
-# Crear instancia global del evaluador real
-hand_evaluator = HandEvaluator()
-
-# ---------- Wrapper para evaluador real compatible con JAX ----------
-def evaluate_hand_jax(cards_device):
-    """
-    Wrapper JAX-compatible para el evaluador real de manos.
-    Usa phevaluator para evaluación profesional de manos.
-    """
-    cards_np = np.asarray(cards_device)
-    
-    # Convertir cartas a formato compatible con evaluador
-    if np.all(cards_np >= 0):  # Solo evaluar si todas las cartas son válidas
-        try:
-            # Usar el evaluador real en lugar del mock
-            strength = hand_evaluator.evaluate_single(cards_np.tolist())
-            return np.int32(strength)
-        except:
-            # Fallback a evaluación simple si falla
-            return np.int32(np.sum(cards_np) % 7462)
-    else:
-        return np.int32(9999)  # Mano inválida
 
 # ---------- Config ----------
 @dataclass
 class TrainerConfig:
     batch_size: int = 128
-    num_actions: int = 6  # CAMBIADO: de 3 a 6 para coincidir con el motor elite (FOLD, CHECK, CALL, BET, RAISE, ALL_IN)
+    num_actions: int = 3  # Cambiado de 14 a 3 para coincidir con el motor
     max_info_sets: int = 50_000
 
-# ---------- Elite Game Engine Wrapper para CFR ----------
-@jax.jit
-def elite_batch_play(keys):
-    """
-    Wrapper JIT-compatible que usa el motor elite y retorna formato compatible con CFR.
-    Retorna (payoffs, histories) como esperaba el trainer original.
-    """
-    # Usar el motor elite para simular juegos
-    game_results = ege.batch_simulate(keys)
-    
-    # Extraer payoffs (ya en formato correcto)
-    payoffs = game_results['payoffs']
-    
-    # Construir historias sintéticas basadas en los resultados del juego
-    # Por ahora usamos una historia simplificada hasta que implementemos el historial completo
-    batch_size = payoffs.shape[0]
-    max_history_length = 60
-    
-    # Crear historias basadas en los resultados del juego
-    histories = jnp.full((batch_size, max_history_length), -1, dtype=jnp.int32)
-    
-    # Simular algunas acciones básicas por juego usando lax.fori_loop (compatible con JIT)
-    def add_action(i, hist):
-        # Acciones aleatorias pero deterministas basadas en el payoff
-        action_seed = payoffs[:, 0] + i  # Usar payoff como semilla
-        actions = jnp.mod(jnp.abs(action_seed).astype(jnp.int32), 6)  # 0-5 para 6 acciones
-        return hist.at[:, i].set(actions)
-    
-    histories = lax.fori_loop(0, jnp.minimum(10, max_history_length), add_action, histories)
-    
-    return payoffs, histories
-
-# ---------- Info Set Computation con Bucketing Avanzado ----------
-def compute_advanced_info_set(game_results, player_idx, game_idx):
-    """
-    Calcula un info set avanzado usando bucketing estilo Pluribus.
-    Compatible con JAX para máximo rendimiento.
-    """
-    # Obtener cartas del jugador
-    hole_cards = game_results['hole_cards'][game_idx, player_idx]
-    community_cards = game_results['final_community'][game_idx]
-    
-    # Extraer ranks y suits
-    hole_ranks = hole_cards // 4
-    hole_suits = hole_cards % 4
-    
-    # Características básicas para el info set
-    num_community = jnp.sum(community_cards >= 0)  # Número de cartas comunitarias
-    
-    # 1. Street bucketing (4 buckets: preflop, flop, turn, river)
-    street_bucket = lax.cond(
-        num_community == 0,
-        lambda: 0,  # Preflop
-        lambda: lax.cond(
-            num_community == 3,
-            lambda: 1,  # Flop
-            lambda: lax.cond(
-                num_community == 4,
-                lambda: 2,  # Turn
-                lambda: 3   # River
-            )
-        )
-    )
-    
-    # 2. Hand strength bucketing (169 preflop buckets como Pluribus)
-    high_rank = jnp.maximum(hole_ranks[0], hole_ranks[1])
-    low_rank = jnp.minimum(hole_ranks[0], hole_ranks[1])
-    is_suited = (hole_suits[0] == hole_suits[1]).astype(jnp.int32)
-    is_pair = (hole_ranks[0] == hole_ranks[1]).astype(jnp.int32)
-    
-    # Preflop bucketing estilo Pluribus
-    preflop_bucket = lax.cond(
-        is_pair == 1,
-        lambda: high_rank,  # Pares: 0-12
-        lambda: lax.cond(
-            is_suited == 1,
-            lambda: 13 + high_rank * 12 + low_rank,  # Suited: 13-168
-            lambda: 169 + high_rank * 12 + low_rank  # Offsuit: 169-324
-        )
-    )
-    
-    # Normalizamos para que quede en rango 0-168 para compatibilidad
-    hand_bucket = jnp.mod(preflop_bucket, 169)
-    
-    # 3. Position bucketing (6 buckets: 0-5)
-    position_bucket = player_idx
-    
-    # 4. Stack depth bucketing (20 buckets como sistemas profesionales)
-    # Usamos pot size como proxy para stack depth por ahora
-    pot_size = game_results['final_pot'][game_idx]
-    stack_bucket = jnp.clip(pot_size / 5.0, 0, 19).astype(jnp.int32)
-    
-    # 5. Pot odds bucketing (10 buckets)
-    pot_bucket = jnp.clip(pot_size / 10.0, 0, 9).astype(jnp.int32)
-    
-    # 6. Active players (5 buckets: 2-6 players)
-    # Por simplicidad, usamos una estimación
-    active_bucket = jnp.clip(player_idx, 0, 4)
-    
-    # Combinar todos los factores en un info set ID único
-    # Total buckets: 4 × 169 × 6 × 20 × 10 × 5 = 405,600 (compatible con 50K limite)
-    info_set_id = (
-        street_bucket * 10000 +      # 4 × 10000 = 40,000
-        hand_bucket * 50 +           # 169 × 50 = 8,450  
-        position_bucket * 8 +        # 6 × 8 = 48
-        stack_bucket * 2 +           # 20 × 2 = 40
-        pot_bucket * 1 +             # 10 × 1 = 10
-        active_bucket                # 5 × 1 = 5
-    )
-    
-    # Asegurar que esté en el rango válido
-    return jnp.mod(info_set_id, 50000).astype(jnp.int32)
-
-# ---------- JAX-Native CFR Step MEJORADO ----------
+# ---------- JAX-Native CFR Step ----------
 @jax.jit
 def _jitted_train_step(regrets, strategy, key):
     """
-    Un paso de CFR usando el motor elite completo con bucketing avanzado
+    Un paso de CFR simplificado que evita mezclar vmap con scan
     """
     cfg = TrainerConfig()
     keys = jax.random.split(key, cfg.batch_size)
-    
-    # MEJORADO: Usar wrapper elite que retorna formato compatible
-    payoffs, histories = elite_batch_play(keys)
-    
-    # También obtener resultados completos para info sets reales
-    game_results = ege.batch_simulate(keys)
-    
+    payoffs, histories = fge.batch_play(keys)
+
     # Procesar todos los juegos del batch directamente
     def process_single_game(game_idx):
         payoff = payoffs[game_idx]
         history = histories[game_idx]
+        
+        # Encontrar todas las acciones válidas en esta historia
+        valid_actions = history != -1
+        num_valid = jnp.sum(valid_actions)
         
         # Acumular regrets para este juego
         game_regrets = jnp.zeros_like(regrets)
@@ -186,40 +47,37 @@ def _jitted_train_step(regrets, strategy, key):
             valid = action != -1
             
             def compute_regret():
-                # MEJORADO: Usar sistema de bucketing avanzado
-                player_idx = step_idx % 6  # Jugador actual
+                # Recrear el estado hasta este punto
+                state = fge.initial_state_for_idx(game_idx)
+                state = lax.fori_loop(
+                    0, step_idx + 1,
+                    lambda i, s: lax.cond(
+                        history[i] != -1,
+                        lambda st: fge.step(st, history[i]),
+                        lambda st: st,
+                        s
+                    ),
+                    state
+                )
                 
-                # Calcular info set usando bucketing avanzado estilo Pluribus
-                info_set_idx = compute_advanced_info_set(game_results, player_idx, game_idx)
+                player_idx = jnp.squeeze(state.cur_player)
+                legal = fge.get_legal_actions(state)
                 
-                # Calcular counterfactual values mejorados con evaluador real
+                # Calcular counterfactual values
                 def cfv(a):
-                    # Usar evaluación más sofisticada basada en el motor elite
-                    base_value = payoff[player_idx]
-                    
-                    # Factor de acción más realista
-                    if a == action:
-                        action_factor = 1.0
-                    else:
-                        # Penalizar acciones no tomadas basándose en su tipo
-                        if a == 0:  # FOLD
-                            action_factor = 0.2
-                        elif a == 1 or a == 2:  # CHECK/CALL
-                            action_factor = 0.6
-                        else:  # BET/RAISE/ALL_IN
-                            action_factor = 0.4
-                    
-                    return base_value * action_factor
+                    return lax.cond(legal[a], lambda: payoff[player_idx], lambda: 0.0)
                 
                 cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
                 regret_delta = cfv_all - cfv_all[action]
+                
+                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
                 
                 return acc_regrets.at[info_set_idx].add(regret_delta)
             
             return lax.cond(valid, compute_regret, lambda: acc_regrets)
         
         # Procesar todos los pasos del juego
-        final_game_regrets = lax.fori_loop(0, 60, process_step, game_regrets)
+        final_game_regrets = lax.fori_loop(0, fge.MAX_GAME_LENGTH, process_step, game_regrets)
         return final_game_regrets
 
     # Procesar todos los juegos y sumar los regrets
