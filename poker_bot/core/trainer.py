@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import logging
 import pickle
+import os
 from dataclasses import dataclass
 from . import full_game_engine as fge
 from jax import Array
@@ -23,7 +24,7 @@ class TrainerConfig:
 @jax.jit
 def _jitted_train_step(regrets, strategy, key):
     """
-    Un paso de CFR completamente vectorizado en JAX
+    Un paso de CFR que mantiene las dimensiones correctas
     """
     cfg = TrainerConfig()
     keys = jax.random.split(key, cfg.batch_size)
@@ -32,94 +33,90 @@ def _jitted_train_step(regrets, strategy, key):
     def game_step(carry, step_idx):
         regrets, strategy = carry
         
-        # Procesamos cada juego del batch para este paso
-        def process_single_game(batch_idx):
+        # En lugar de devolver arrays completos, calculamos solo los CAMBIOS
+        def one_game(batch_idx):
             payoff = payoffs[batch_idx]
             history = histories[batch_idx]
             action = history[step_idx]
             valid = action != -1
             
-            # Si no es válido, retornamos valores neutros
-            def compute_deltas():
-                # Reconstruimos el estado hasta este punto
+            def do_update():
+                # Reconstruimos el estado
                 state = fge.initial_state_for_idx(batch_idx)
                 
-                # Aplicamos las acciones hasta el paso actual
-                def apply_action_at_step(i, s):
-                    return lax.cond(
+                # Aplicamos acciones hasta el paso actual
+                state = lax.fori_loop(
+                    0, step_idx + 1,
+                    lambda i, s: lax.cond(
                         history[i] != -1,
-                        lambda: fge.step(s, history[i]),
-                        lambda: s
-                    )
+                        lambda st: fge.step(st, history[i]),
+                        lambda st: st,
+                        s
+                    ),
+                    state
+                )
                 
-                state = lax.fori_loop(0, step_idx + 1, apply_action_at_step, state)
-                
-                # Información del estado
                 player_idx = state.cur_player[0]
                 legal = fge.get_legal_actions(state)
                 
                 # Valores contrafactuales
-                cfv_values = jnp.where(legal, payoff[player_idx], 0.0)
-                cfv_taken = cfv_values[action]
+                def cfv(a):
+                    return lax.cond(legal[a], lambda: payoff[player_idx], lambda: 0.0)
+                cfv_all = jax.vmap(cfv)(jnp.arange(cfg.num_actions))
+                regret_delta = cfv_all - cfv_all[action]
                 
-                # Delta de regret para esta acción
-                regret_delta = cfv_values - cfv_taken
+                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets).astype(jnp.int32)
                 
-                # Índice del information set
-                info_set_idx = jnp.mod(player_idx, cfg.max_info_sets)
-                
+                # IMPORTANTE: Devolvemos solo el índice y el delta, NO los arrays completos
                 return info_set_idx, regret_delta
             
-            # Computamos los deltas solo si la acción es válida
-            info_idx, reg_delta = lax.cond(
-                valid,
-                compute_deltas,
+            # Si no es válido, devolvemos valores neutros
+            info_idx, delta = lax.cond(
+                valid, 
+                do_update, 
                 lambda: (0, jnp.zeros(cfg.num_actions))
             )
             
-            # Retornamos el índice, delta y máscara de validez
-            return info_idx, reg_delta, valid
+            # Máscara de validez
+            masked_delta = jnp.where(valid, delta, 0.0)
+            
+            return info_idx, masked_delta
+
+        # Ahora vmap devuelve solo índices y deltas, no arrays completos
+        info_indices, deltas = jax.vmap(one_game)(jnp.arange(cfg.batch_size))
         
-        # Procesamos todo el batch
-        indices, deltas, valids = jax.vmap(process_single_game)(jnp.arange(cfg.batch_size))
+        # info_indices tiene forma [batch_size]
+        # deltas tiene forma [batch_size, num_actions]
         
-        # Ahora necesitamos acumular los deltas en los regrets
-        # Usamos un scatter-add pattern
-        # Para cada índice único, sumamos todos los deltas correspondientes
+        # Acumulamos los deltas en los regrets
+        # Usamos un loop simple para evitar problemas con scatter
+        def accumulate_deltas(i, acc_regrets):
+            idx = info_indices[i]
+            delta = deltas[i]
+            return acc_regrets.at[idx].add(delta)
         
-        # Creamos una función para acumular un solo info set
-        def accumulate_for_info_set(info_idx):
-            # Máscara para este info set
-            mask = (indices == info_idx) & valids
-            # Sumamos todos los deltas para este info set
-            accumulated_delta = jnp.sum(
-                jnp.where(mask[:, None], deltas, 0.0),
-                axis=0
-            )
-            return accumulated_delta
-        
-        # Aplicamos la acumulación para todos los info sets
-        all_info_indices = jnp.arange(cfg.max_info_sets)
-        accumulated_deltas = jax.vmap(accumulate_for_info_set)(all_info_indices)
-        
-        # Actualizamos los regrets
-        new_regrets = regrets + accumulated_deltas
+        # Aplicamos las actualizaciones
+        new_regrets = lax.fori_loop(
+            0, cfg.batch_size,
+            accumulate_deltas,
+            regrets
+        )
         
         # Actualizamos la estrategia con regret matching
         positive_regrets = jnp.maximum(new_regrets, 0.0)
         regret_sums = jnp.sum(positive_regrets, axis=1, keepdims=True)
         
-        # Nueva estrategia
+        # Evitamos división por cero
         new_strategy = jnp.where(
             regret_sums > 0,
             positive_regrets / regret_sums,
             jnp.ones((cfg.max_info_sets, cfg.num_actions)) / cfg.num_actions
         )
         
-        # Retornamos el carry actualizado (manteniendo las formas)
+        # Retornamos el carry actualizado (mismas dimensiones que la entrada)
         return (new_regrets, new_strategy), None
 
-    # Ejecutamos el scan sobre todos los pasos del juego
+    # Ejecutamos scan sobre todos los pasos del juego
     (final_regrets, final_strategy), _ = lax.scan(
         game_step,
         (regrets, strategy),
@@ -135,21 +132,35 @@ class PokerTrainer:
         self.iteration = 0
         self.regrets  = jnp.zeros((config.max_info_sets, config.num_actions), dtype=jnp.float32)
         self.strategy = jnp.ones((config.max_info_sets, config.num_actions), dtype=jnp.float32) / config.num_actions
-        logger.info("PokerTrainer CFR-JIT listo.")
-        logger.info(f"Configuración: batch_size={config.batch_size}, "
-                   f"num_actions={config.num_actions}, "
-                   f"max_info_sets={config.max_info_sets}")
+        
+        logger.info("=" * 60)
+        logger.info("🎯 PokerTrainer CFR-JIT inicializado")
+        logger.info("=" * 60)
+        logger.info(f"📊 Configuración:")
+        logger.info(f"   - Batch size: {config.batch_size}")
+        logger.info(f"   - Num actions: {config.num_actions}")
+        logger.info(f"   - Max info sets: {config.max_info_sets:,}")
+        logger.info(f"   - Shape regrets: {self.regrets.shape}")
+        logger.info(f"   - Shape strategy: {self.strategy.shape}")
+        logger.info("=" * 60)
 
     def train(self, num_iterations: int, save_path: str, save_interval: int):
-        key = jax.random.PRNGKey(0)
+        key = jax.random.PRNGKey(42)  # Semilla fija para reproducibilidad
         
-        logger.info(f"🚀 Iniciando entrenamiento CFR")
-        logger.info(f"   Iteraciones: {num_iterations}")
+        logger.info("\n🚀 INICIANDO ENTRENAMIENTO CFR")
+        logger.info(f"   Total iteraciones: {num_iterations}")
         logger.info(f"   Guardar cada: {save_interval} iteraciones")
+        logger.info(f"   Path base: {save_path}")
+        logger.info("\n⏳ Compilando función JIT (primera iteración será más lenta)...\n")
+        
+        import time
+        start_time = time.time()
         
         for i in range(1, num_iterations + 1):
             self.iteration += 1
             iter_key = jax.random.fold_in(key, self.iteration)
+            
+            iter_start = time.time()
             
             try:
                 # Un paso de entrenamiento
@@ -159,24 +170,28 @@ class PokerTrainer:
                     iter_key
                 )
                 
-                # Aseguramos que la computación termine
+                # Esperamos a que termine la computación
                 self.regrets.block_until_ready()
                 
-                # Métricas de progreso
+                iter_time = time.time() - iter_start
+                
+                # Log simple cada iteración
+                logger.info(f"✓ Iteración {self.iteration} completada ({iter_time:.2f}s)")
+                
+                # Métricas detalladas periódicamente
                 if self.iteration % max(1, num_iterations // 10) == 0:
-                    # Calculamos algunas estadísticas
-                    avg_regret = float(jnp.mean(jnp.abs(self.regrets)))
-                    max_regret = float(jnp.max(jnp.abs(self.regrets)))
-                    non_zero_regrets = int(jnp.sum(jnp.any(self.regrets != 0, axis=1)))
-                    
-                    logger.info(f"📊 Iteración {self.iteration}/{num_iterations}")
-                    logger.info(f"   Regret promedio: {avg_regret:.4f}")
-                    logger.info(f"   Regret máximo: {max_regret:.4f}")
-                    logger.info(f"   Info sets activos: {non_zero_regrets}/{self.config.max_info_sets}")
+                    self._log_detailed_metrics(num_iterations, start_time)
                 
             except Exception as e:
-                logger.error(f"❌ Error en iteración {self.iteration}: {str(e)}")
+                logger.error(f"\n❌ ERROR en iteración {self.iteration}")
+                logger.error(f"   Tipo: {type(e).__name__}")
+                logger.error(f"   Mensaje: {str(e)}")
                 logger.error(f"   Shapes - regrets: {self.regrets.shape}, strategy: {self.strategy.shape}")
+                
+                import traceback
+                logger.error("\nTraceback completo:")
+                logger.error(traceback.format_exc())
+                
                 raise
                 
             # Guardamos checkpoints
@@ -184,12 +199,56 @@ class PokerTrainer:
                 checkpoint_path = f"{save_path}_iter_{self.iteration}.pkl"
                 self.save_model(checkpoint_path)
         
+        # Resumen final
+        total_time = time.time() - start_time
+        
         # Guardamos el modelo final
         final_path = f"{save_path}_final.pkl"
         self.save_model(final_path)
         
-        logger.info("🎉 Entrenamiento completado exitosamente!")
-        logger.info(f"   Modelo final guardado en: {final_path}")
+        logger.info("\n" + "="*60)
+        logger.info("🎉 ENTRENAMIENTO COMPLETADO EXITOSAMENTE! 🎉")
+        logger.info("="*60)
+        logger.info(f"⏱️  Tiempo total: {total_time:.1f}s ({total_time/60:.1f} min)")
+        logger.info(f"📊 Iteraciones completadas: {self.iteration}")
+        logger.info(f"⚡ Velocidad promedio: {self.iteration/total_time:.1f} iter/s")
+        logger.info(f"💾 Modelo final guardado: {final_path}")
+        logger.info("="*60 + "\n")
+
+    def _log_detailed_metrics(self, total_iterations, start_time):
+        """Log métricas detalladas del entrenamiento"""
+        elapsed = time.time() - start_time
+        
+        # Métricas de regret
+        avg_regret = float(jnp.mean(jnp.abs(self.regrets)))
+        max_regret = float(jnp.max(jnp.abs(self.regrets)))
+        min_regret = float(jnp.min(self.regrets))
+        non_zero_regrets = int(jnp.sum(jnp.any(self.regrets != 0, axis=1)))
+        
+        # Métricas de estrategia
+        eps = 1e-8
+        strategy_entropy = -float(jnp.mean(
+            jnp.sum(self.strategy * jnp.log(self.strategy + eps), axis=1)
+        ))
+        max_action_prob = float(jnp.max(self.strategy))
+        min_action_prob = float(jnp.min(self.strategy))
+        
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📊 REPORTE DE PROGRESO - Iteración {self.iteration}/{total_iterations}")
+        logger.info(f"{'='*60}")
+        logger.info(f"⏱️  Tiempo transcurrido: {elapsed:.1f}s")
+        logger.info(f"⚡ Velocidad: {self.iteration/elapsed:.1f} iter/s")
+        logger.info(f"⏳ ETA: {(total_iterations-self.iteration)/(self.iteration/elapsed):.1f}s")
+        logger.info(f"\n📈 MÉTRICAS DE REGRET:")
+        logger.info(f"   - Promedio: {avg_regret:.6f}")
+        logger.info(f"   - Máximo: {max_regret:.6f}")
+        logger.info(f"   - Mínimo: {min_regret:.6f}")
+        logger.info(f"   - Info sets activos: {non_zero_regrets:,}/{self.config.max_info_sets:,} ({100*non_zero_regrets/self.config.max_info_sets:.1f}%)")
+        logger.info(f"\n🎲 MÉTRICAS DE ESTRATEGIA:")
+        logger.info(f"   - Entropía: {strategy_entropy:.4f}")
+        logger.info(f"   - Prob máxima: {max_action_prob:.4f}")
+        logger.info(f"   - Prob mínima: {min_action_prob:.6f}")
+        logger.info(f"{'='*60}\n")
 
     def save_model(self, path: str):
         """Guarda el modelo actual a disco"""
@@ -203,7 +262,8 @@ class PokerTrainer:
         with open(path, 'wb') as f:
             pickle.dump(model_data, f)
         
-        logger.info(f"💾 Checkpoint guardado: {path}")
+        size_mb = os.path.getsize(path) / 1024 / 1024
+        logger.info(f"💾 Checkpoint guardado: {path} ({size_mb:.1f} MB)")
 
     def load_model(self, path: str):
         """Carga un modelo desde disco"""
@@ -221,3 +281,6 @@ class PokerTrainer:
         logger.info(f"   Iteración: {self.iteration}")
         logger.info(f"   Shape regrets: {self.regrets.shape}")
         logger.info(f"   Shape strategy: {self.strategy.shape}")
+
+# Importamos time si no está importado
+import time
